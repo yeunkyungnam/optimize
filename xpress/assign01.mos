@@ -1,0 +1,56 @@
+!@encoding CP949
+model Exam001
+uses "mmxprs"; !gain access to the Xpress-Optimizer solver
+
+declarations
+  ITEM = 1..5
+  RES = 1..5
+  TIME = 1..10
+  
+  DEM: array(ITEM,TIME) of integer
+  CAPA: array(RES,TIME) of integer
+  PCOST: array(ITEM,RES) of integer
+  SCOST: array(ITEM) of integer
+  ISTOCK: array(ITEM) of integer
+  
+  prodqty: array(ITEM,RES,TIME) of mpvar
+  storeqty: array(ITEM,TIME) of mpvar 
+  
+  demconst: array(ITEM, TIME) of linctr
+  capaconst: array(RES, TIME) of linctr
+  
+  minObj:linctr
+end-declarations
+
+initializations from 'data.txt'
+  DEM CAPA PCOST SCOST ISTOCK
+end-initializations
+
+
+writeln("Begin running model")
+
+  !forall(i in ITEM, j in RES, k in TIME) prodqty(i,j,k) is_integer
+  !forall(j in RES, k in TIME) storeqty(j,k) is_integer
+
+  minObj := sum(i in ITEM, j in RES, k in TIME) prodqty(i,j,k)*PCOST(i,j) +
+  			sum(i in ITEM, j in RES, k in TIME) storeqty(i,k)*SCOST(i)
+
+  !Satisfy the demand for every period
+  forall(i in ITEM, k in TIME) do
+  	if k = 1 then
+  	  demconst(i,k) := sum(j in RES)prodqty(i,j,k) + ISTOCK(i) = DEM(i,k) + storeqty(i,k)
+  	else
+  	  demconst(i,k) := sum(j in RES)prodqty(i,j,k) + storeqty(i,k-1)= DEM(i,k) + storeqty(i,k)
+  	end-if
+  end-do
+  
+  !Capa
+  forall(j in RES, k in TIME) do
+     capaconst(j,k) := CAPA(j,k) >= sum(i in ITEM)prodqty(i,j,k)
+  end-do
+
+  minimize(minObj)
+  
+writeln("End running model")
+
+end-model
