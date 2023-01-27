@@ -1,0 +1,144 @@
+! Common functions for Reading and Writing files
+
+declarations
+	! This will containing contants of data file
+	! ex) data("SD1", 2,1) means first field at line 2 of file "SD1"
+	_Data : array(string, integer, integer) of string
+	! The number of lines of data file will be stored to this
+	_Line : array(string) of integer
+	! The number of fields 
+	_Columns : integer
+	! True if the file is already read
+	_Read : array(string) of boolean
+	DELIM = ","	
+	FILE_PREFIX = ""
+	IN_FILE_EXT = ".txt"
+	OUT_FILE_EXT = ".csv"
+end-declarations
+
+! Declarations of temporary variables for reading data files
+declarations
+	_filename : string
+	_line : integer
+	_value : array(1..20) of string
+	_temp_int : integer
+	_temp_real : real
+	_code : string
+	_from, _to : string
+end-declarations
+
+setparam("ioctrl", true)
+
+! Read a data file 
+! File contents will be stored to _data
+procedure readfile(mFilename : string)
+	declarations
+		_s : array(1..20) of string
+		_line : integer
+	end-declarations
+	
+	fopen(PLAN_DIR + "/" + mFilename + IN_FILE_EXT, F_INPUT)
+	if getparam("iostatus") = 0 then
+		repeat
+			readln(_s(1), _s(2), _s(3), _s(4), _s(5), _s(6), _s(7), _s(8), _s(9), _s(10), 
+			      _s(11), _s(12), _s(13), _s(14), _s(15), _s(16), _s(17), _s(18), _s(19), _s(20))
+			if getparam("nbread") < 1 or getsize(_s(1)) = 0 then 
+				break
+			end-if
+			_line := _line + 1
+			forall (i in 1..getparam("nbread")) do
+				_Data(mFilename, _line, i) := _s(i)
+				_Columns := i
+			end-do			
+		until false
+		_Line(mFilename) := _line
+	else
+		_Line(mFilename) := 0
+		_Columns := 0
+	end-if
+	fclose(F_INPUT)
+
+end-procedure
+
+! Give specified data
+! If the file is not yet loaded, read the file first
+function getdata(mFilename : string, mRow : integer, mColumn : integer) : string
+	if _Read(mFilename) = false then
+		readfile(mFilename)
+		_Read(mFilename) := true
+	end-if
+	returned := _Data(mFilename, mRow, mColumn)
+end-function
+
+! Give number of lines of file
+! If the file is not yet loaded, read the file first
+function getdataline(mFilename : string) : integer
+	if _Read(mFilename) = false then
+		readfile(mFilename)
+		_Read(mFilename) := true
+	end-if
+	returned := _Line(mFilename)
+end-function
+
+function getdatacolumns(mFilename : string) : integer
+	if _Read(mFilename) = false then
+		readfile(mFilename)
+		_Read(mFilename) := true
+	end-if
+	returned := _Columns
+end-function
+	
+! check if the file is already read
+function isread(mFilename: string) : boolean
+	returned := _Read(mFilename)
+end-function
+
+! set the file to be read
+procedure setreadon(mFilename: string)
+	_Read(mFilename) := true
+end-procedure
+
+! open text file to write
+procedure _openfileforwrite(mFilename : string)
+	fopen(PLAN_DIR + "/" + mFilename + OUT_FILE_EXT, F_OUTPUT)
+end-procedure
+
+! write a line to an open out file
+procedure _writeline(mFields : list of string, num : integer)
+	_temp_int := 0
+	forall (i in mFields) do
+		write(i)
+		_temp_int += 1
+		if (_temp_int = num) then
+			writeln
+		else
+			write(DELIM)
+		end-if
+	end-do
+end-procedure
+
+! close the open file for writing 
+procedure _closefileforwrite
+	fclose(F_OUTPUT)
+end-procedure
+
+! initial engine status file stamp
+procedure _init_engine_status(mFilename : string)
+	_openfileforwrite(mFilename) ! open file for writing
+	_writeline(['0','0'],2) ! write one line to indicate the engine under progress
+	_closefileforwrite ! close the file
+end-procedure
+
+! abnormal termination of the engine
+procedure _abnormal_engine_status(mFilename : string)
+	_openfileforwrite(mFilename) ! open file for writing
+	_writeline(['1','0'],2) ! write one line to indicate the engine abnormally stopped
+	_closefileforwrite ! close the file
+end-procedure
+
+! normal termination of the engine
+procedure _normal_engine_status(mFilename : string)
+	_openfileforwrite(mFilename) ! open file for writing
+	_writeline(['1','1'],2) ! write one line to indicate the engine normally stopped
+	_closefileforwrite ! close the file
+end-procedure

@@ -2,6 +2,13 @@
 model Exam001
 uses "mmxprs"; !gain access to the Xpress-Optimizer solver
 
+parameters
+  PLAN_DIR = "./"
+  TLNC = 0.0001
+end-parameters
+
+include "common.mos"
+
 declarations
   ITEM = 1..100
   RES = 1..100
@@ -29,8 +36,8 @@ end-initializations
 
 writeln("Begin running model")
 
-  forall(i in ITEM, j in RES, k in TIME) prodqty(i,j,k) is_integer
-  forall(j in RES, k in TIME) storeqty(j,k) is_integer
+  !forall(i in ITEM, j in RES, k in TIME) prodqty(i,j,k) is_integer
+  !forall(j in RES, k in TIME) storeqty(j,k) is_integer
 
   minObj := sum(i in ITEM, j in RES, k in TIME) prodqty(i,j,k)*PCOST(i,j) +
   			sum(i in ITEM, j in RES, k in TIME) storeqty(i,k)*SCOST(i)
