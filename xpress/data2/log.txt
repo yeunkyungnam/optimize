@@ -1,0 +1,57 @@
+>> Initializing Data....
+>>> Initializing Data Done.
+ #Load Data : 0.206
+
+>> Initializing optimization model ....
+ #Make Constraints & Objective : 51.799
+
+ 
+Reading Problem \xprs_c021010
+Problem Statistics
+       55000 (      0 spare) rows
+     5050000 (      0 spare) structural columns
+    10099000 (      0 spare) non-zero elements
+Global Statistics
+           0 entities        0 sets        0 set members
+FICO Xpress v8.5.6, solve started 14:11:42, Jan 31, 2023
+Minimizing LP \xprs_c021010
+Original problem has:
+     55000 rows      5050000 cols     10099000 elements
+Presolved problem has:
+     54800 rows      5049800 cols     10098600 elements
+Starting sifting solver using parallel dual simplex method
+ 
+   Its         Obj Value      S   Ninf  Nneg   Sum Sift Inf  Time
+ 24842       9550000.000     SD  49167 492742    18275300.00     5
+ 26094       3450000.000     SD  47143 325691    17504200.00     5
+ 27613       3510000.000     SD  45405 114277    16849300.00     6
+ 28450       3550000.000     SD  44747     1    16614500.00     6
+ 44529       183155000.0     SD  39501 4054540    14818900.00     7
+ 95744       542560000.0     SD  29776 3210304    11225100.00     8
+138001       918635000.0     SD  19541 2284193    7466500.000     9
+173860       1306550000.     SD   9262 1519743    3591700.000    11
+208421       1540125000.     SD   2915 590931    1287300.000    13
+233139       1629835000.     SD   1515 743890    699200.0000    16
+259002       1694825000.     SD    610 306975    282900.0000    20
+275985       1725885000.     SD    279 104492    135800.0000    23
+292424       1745380000.     SD     95 38196    46000.00000    26
+295524       1762600000.     SD      0     1        .000000    28
+295524       1762600000.     SD      0     0        .000000    28
+295524       1762600000.      P      0     0        .000000    28
+Uncrunching matrix
+Optimal solution found
+Dual solved problem
+  295524 simplex iterations in 29s
+
+Final objective                         : 1.762600000000000e+09
+  Max primal violation      (abs / rel) :       0.0 /       0.0
+  Max dual violation        (abs / rel) :       0.0 /       0.0
+  Max complementarity viol. (abs / rel) :       0.0 /       0.0
+All values within tolerances
+>>> Optimizing model Done
+ #Solve Problem : 57.979
+
+>> Creating and writing output files....
+>>> Output files successfully created.
+ #Write ouput : 5.401
+

@@ -1,0 +1,49 @@
+>> Initializing Data....
+>>> Initializing Data Done.
+ #Load Data : 0.029
+
+>> Initializing optimization model ....
+ #Make Constraints & Objective : 0.377
+
+ 
+Reading Problem \xprs_34860010
+Problem Statistics
+       10000 (      0 spare) rows
+      505000 (      0 spare) structural columns
+     1009900 (      0 spare) non-zero elements
+Global Statistics
+           0 entities        0 sets        0 set members
+FICO Xpress v8.5.6, solve started 14:13:06, Jan 31, 2023
+Minimizing LP \xprs_34860010
+Original problem has:
+     10000 rows       505000 cols      1009900 elements
+Presolved problem has:
+      9980 rows       504980 cols      1009860 elements
+Folded problem has:
+       499 rows         1499 cols         2993 elements
+ 
+   Its         Obj Value      S   Ninf  Nneg   Sum Dual Inf  Time
+     0           .000000      D    249     0        .000000     1
+   477       192800000.0      D      0     0        .000000     1
+Unfolding matrix
+ 32093       192800000.0      P      0     0        .000000     2
+ 32093       192800000.0      N      0     0        .000000     2
+ 32115       192800000.0      D      0     0        .000000     2
+ 32115       192800000.0      D      0     0        .000000     2
+Uncrunching matrix
+Optimal solution found
+Dual solved problem
+  32115 simplex iterations in 2s
+
+Final objective                         : 1.928000000000000e+08
+  Max primal violation      (abs / rel) :       0.0 /       0.0
+  Max dual violation        (abs / rel) :       0.0 /       0.0
+  Max complementarity viol. (abs / rel) :       0.0 /       0.0
+All values within tolerances
+>>> Optimizing model Done
+ #Solve Problem : 4.189
+
+>> Creating and writing output files....
+>>> Output files successfully created.
+ #Write ouput : 0.556
+

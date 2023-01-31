@@ -1,0 +1,170 @@
+! Declarations for Input data
+
+declarations
+	! index
+	ITEM : set of integer
+	RES : set of integer
+	TIME : set of integer
+	
+	! IN01. Engine Controls / IN01_Engine_Controls.txt
+	INF_OPTION : integer
+	ONOFF_OPTION : integer
+	MAX_TIME : real
+	MIP_GAP : real
+	
+	! IN02. Demeant / IN02_Demand.txt
+	DEM: array(ITEM,TIME) of integer
+	
+	! IN03. Capacity / IN03_capa.txt
+	CAPA: array(RES,TIME) of integer
+	
+	! IN04. Product Cost / IN04_Prod_cost.txt
+  	PCOST: array(ITEM,RES) of integer
+
+	! IN05. Stock Cost / IN05_Stock_cost.txt
+	SCOST: array(ITEM) of integer
+
+	! IN06. Initial Stock / IN06_Init_stock.txt
+	ISTOCK: array(ITEM) of integer
+
+end-declarations
+
+writeln(">> Initializing Data....")
+!! Reading IN01_Engine_Controls.txt
+_filename := "IN01_Engine_Controls"
+if isread(_filename) = false then
+	readfile(_filename)
+	setreadon(_filename)
+end-if
+_line := getdataline(_filename)
+if _line=0 then 
+	writeln(">>> ERROR: error while reading:", _filename)
+	_abnormal_engine_status("OD01_Engine_Status")
+	exit(0)
+end-if
+
+forall(j in 1..4) do ! this file has only one line
+	_value(j) := getdata(_filename, 1, j)
+end-do
+INF_OPTION := integer(_value(1))
+ONOFF_OPTION := integer(_value(2))
+MAX_TIME := real(_value(3))
+MIP_GAP := real(_value(4))
+
+!! Reading IN02_Supplier.txt	
+_filename := "IN02_Demand"
+if isread(_filename) = false then
+	readfile(_filename)
+	setreadon(_filename)
+end-if
+_line := getdataline(_filename)
+if _line=0 then 
+	writeln(">>> ERROR: error while reading:", _filename)
+	_abnormal_engine_status("OD01_Engine_Status")
+	exit(0)
+end-if
+forall(i in 1.._line) do
+	forall(j in 1..3) do
+		_value(j) := getdata(_filename, i, j)
+	end-do
+	ITEM += {integer(_value(1))}
+	TIME += {integer(_value(2))}
+	DEM(integer(_value(1)),integer(_value(2))) := integer(_value(3))
+end-do
+finalize(ITEM)
+finalize(TIME)
+
+!! Reading IN03_capa.txt	
+_filename := "IN03_capa"
+if isread(_filename) = false then
+	readfile(_filename)
+	setreadon(_filename)
+end-if
+_line := getdataline(_filename)
+if _line=0 then 
+	writeln(">>> ERROR: error while reading:", _filename)
+	_abnormal_engine_status("OD01_Engine_Status")
+	exit(0)
+end-if
+forall(i in 1.._line) do
+	forall(j in 1..3) do
+		_value(j) := getdata(_filename, i, j)
+	end-do
+	if (integer(_value(2)) not in TIME) then
+		writeln(">>> ERROR: Unknown Depot code:", _filename, ", ", _value(1))
+		_abnormal_engine_status("OD01_Engine_Status")
+		exit(0)
+	end-if
+	RES += {integer(_value(1))}
+	CAPA(integer(_value(1)),integer(_value(2))) := integer(_value(3))
+end-do
+finalize(RES)
+
+!! Reading IN04_Prod_cost.txt	
+_filename := "IN04_Prod_cost"
+if isread(_filename) = false then
+	readfile(_filename)
+	setreadon(_filename)
+end-if
+_line := getdataline(_filename)
+if _line=0 then 
+	writeln(">>> ERROR: error while reading:", _filename)
+	_abnormal_engine_status("OD01_Engine_Status")
+	exit(0)
+end-if
+forall(i in 1.._line) do
+	forall(j in 1..3) do
+		_value(j) := getdata(_filename, i, j)
+	end-do
+	PCOST(integer(_value(1)),integer(_value(2))) := integer(_value(3))
+end-do
+
+!! Reading IN05_Stock_cost.txt
+_filename := "IN05_Stock_cost"
+if isread(_filename) = false then
+	readfile(_filename)
+	setreadon(_filename)
+end-if
+_line := getdataline(_filename)
+if _line=0 then 
+	writeln(">>> ERROR: error while reading:", _filename)
+	_abnormal_engine_status("OD01_Engine_Status")
+	exit(0)
+end-if
+forall(i in 1.._line) do
+	forall(j in 1..2) do
+		_value(j) := getdata(_filename, i, j)
+	end-do
+	if (integer(_value(1)) not in ITEM) then
+		writeln(">>> ERROR: Unknown Supplier code:", _filename, ", ", _value(1))
+		_abnormal_engine_status("OD01_Engine_Status")
+		exit(0)
+	end-if
+	SCOST(integer(_value(1))) := integer(_value(2))
+end-do
+
+!! Reading IN06_Init_stock.txt
+_filename := "IN06_Init_stock"
+if isread(_filename) = false then
+	readfile(_filename)
+	setreadon(_filename)
+end-if
+_line := getdataline(_filename)
+if _line=0 then 
+	writeln(">>> ERROR: error while reading:", _filename)
+	_abnormal_engine_status("OD01_Engine_Status")
+	exit(0)
+end-if
+forall(i in 1.._line) do
+	forall(j in 1..2) do
+		_value(j) := getdata(_filename, i, j)
+	end-do
+	if (integer(_value(1)) not in ITEM) then
+		writeln(">>> ERROR: Unknown Depot code:", _filename, ", ", _value(1))
+		_abnormal_engine_status("OD01_Engine_Status")
+		exit(0)
+	end-if
+	ISTOCK(integer(_value(1))) := integer(_value(2))
+end-do
+
+writeln(">>> Initializing Data Done.")

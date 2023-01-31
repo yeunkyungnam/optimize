@@ -1,0 +1,99 @@
+model SCP_LARGE_SCALE	
+	uses "mmxprs","mmsystem"
+	options noimplicit
+
+	parameters
+		PLAN_DIR = "./data"
+		TLNC = 0.0001
+	end-parameters
+
+	include "common.mos"		    ! common procedures and functions for data in-out
+
+	! before the engine starts, write OD01_Engine_Status.csv file for UI module
+	_init_engine_status("OD01_Engine_Status")
+	
+	declarations
+		starttime : real
+	end-declarations
+	starttime := gettime
+
+	include "dataread.mos"			! input data reading including declarations for input data
+
+	writeln(" #Load Data : ", gettime - starttime)
+	writeln("")
+	starttime := gettime
+	writeln(">> Initializing optimization model ....")
+	declarations
+		! declarations for decision variables
+		prodqty: array(ITEM,RES,TIME) of mpvar
+		storeqty: array(ITEM,TIME) of mpvar 
+		
+		! declarations for linear contraints
+		demconst: array(ITEM, TIME) of linctr
+		capaconst: array(RES, TIME) of linctr
+		
+		! declarations for objective fucntion
+		minObj:linctr
+	end-declarations
+	
+	! bounds for binary variables
+		!forall(i in ITEM, j in RES, k in TIME) prodqty(i,j,k) is_integer
+		!forall(j in RES, k in TIME) storeqty(j,k) is_integer
+	
+	!! Constraints definition
+	!Satisfy the demand for every period
+	forall(i in ITEM, k in TIME) do
+		if k = 1 then
+			demconst(i,k) := sum(j in RES)prodqty(i,j,k) + ISTOCK(i) = DEM(i,k) + storeqty(i,k)
+		else
+			demconst(i,k) := sum(j in RES)prodqty(i,j,k) + storeqty(i,k-1)= DEM(i,k) + storeqty(i,k)
+		end-if
+	end-do
+	
+	!Capa
+	forall(j in RES, k in TIME) do
+		capaconst(j,k) := CAPA(j,k) >= sum(i in ITEM)prodqty(i,j,k)
+	end-do
+	
+	!! Objective function definition
+	minObj := sum(i in ITEM, j in RES, k in TIME) prodqty(i,j,k)*PCOST(i,j) +
+			  sum(i in ITEM, k in TIME) storeqty(i,k)*SCOST(i)
+	
+	writeln(" #Make Constraints & Objective : ", gettime - starttime)
+	writeln("")
+	starttime := gettime
+	
+	!! setting control parameters for optimization
+	setparam("xprs_verbose", true)
+	!if (MAX_TIME > 0) then
+		!setparam("XPRS_MAXTIME", MAX_TIME)
+	!end-if
+	if (MIP_GAP > 0) then
+		setparam("xprs_miprelstop", MIP_GAP/100.0)
+	end-if
+	
+	!! Solve first phase : check if infeasible
+	!! Then solve again to minimize cost
+	
+	minimize(minObj)
+	
+	if (getprobstat = XPRS_OPT or getprobstat = XPRS_UNF) then
+		writeln(">>> Optimizing model Done")	
+	else
+		writeln(">>> ERROR: Failed in Optimizing Phase.", getprobstat)
+		_abnormal_engine_status("OD01_Engine_Status")
+		exit(0)
+	end-if		
+	writeln(" #Solve Problem : ", gettime - starttime)
+	writeln("")
+	starttime := gettime
+	
+	!! Now write Output files
+	
+	include "result.mos"		    ! writing output files
+	
+	!! successful
+	_normal_engine_status("OD01_Engine_Status") 
+	writeln(" #Write ouput : ", gettime - starttime)
+	writeln("")
+end-model

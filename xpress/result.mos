@@ -1,0 +1,29 @@
+	
+writeln(">> Creating and writing output files....")
+	
+declarations
+	_r : array(1..20) of string
+end-declarations
+
+!! Writing OD02_prod.csv
+_openfileforwrite("OD02_prod") 
+forall(i in ITEM, j in RES, k in TIME ) do
+	_r(1) := string(i)
+	_r(2) := string(j)
+	_r(3) := string(k)
+	_r(4) := string(getsol(prodqty(i,j,k)))
+	_writeline([_r(1),_r(2),_r(3),_r(4)],4)
+end-do
+_closefileforwrite
+
+!! Writing OD03_store.csv
+_openfileforwrite("OD03_store") 
+forall(i in ITEM, k in TIME ) do
+	_r(1) := string(i)
+	_r(2) := string(k)
+	_r(3) := string(getsol(storeqty(i,k)))
+	_writeline([_r(1),_r(2),_r(3)],3)
+end-do
+_closefileforwrite
+
+writeln(">>> Output files successfully created.")

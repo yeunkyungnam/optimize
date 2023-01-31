@@ -1,0 +1,53 @@
+>> Initializing Data....
+>>> Initializing Data Done.
+ #Load Data : 0.151
+
+>> Initializing optimization model ....
+ #Make Constraints & Objective : 71.153
+
+ 
+Reading Problem \xprs_492dd010
+Problem Statistics
+      100000 (      0 spare) rows
+     5050000 (      0 spare) structural columns
+    10099900 (      0 spare) non-zero elements
+Global Statistics
+           0 entities        0 sets        0 set members
+FICO Xpress v8.5.6, solve started 14:08:58, Jan 31, 2023
+Minimizing LP \xprs_492dd010
+Original problem has:
+    100000 rows      5050000 cols     10099900 elements
+Presolved problem has:
+     99980 rows      5049980 cols     10099860 elements
+Starting sifting solver using parallel dual simplex method
+ 
+   Its         Obj Value      S   Ninf  Nneg   Sum Sift Inf  Time
+ 30468       43710000.00     SD  49001  2324    18171460.00     6
+ 30549       43290000.00     SD  48988     1    18157100.00     6
+ 43876       337508000.0     SD  41998 4125040    15215700.00     7
+127474       955520000.0     SD  25896 2612502    9035660.000    10
+237411       1671027000.     SD   6601 895915    1880620.000    15
+324450       1875124000.     SD   2445 685589    684740.0000    23
+409494       1978082000.     SD    584 295978    166400.0000    33
+446045       1998861000.     SD    252 115028    80800.00000    40
+497610       2008720000.     SD     20 37952    6220.000000    47
+514172       2009015000.     SD      0  1016        .000000    49
+516604       2008800000.     SD      0     0        .000000    51
+516604       2008800000.      P      0     0        .000000    51
+Uncrunching matrix
+Optimal solution found
+Dual solved problem
+  516604 simplex iterations in 52s
+
+Final objective                         : 2.008800000000000e+09
+  Max primal violation      (abs / rel) :       0.0 /       0.0
+  Max dual violation        (abs / rel) :       0.0 /       0.0
+  Max complementarity viol. (abs / rel) :       0.0 /       0.0
+All values within tolerances
+>>> Optimizing model Done
+ #Solve Problem : 80.176
+
+>> Creating and writing output files....
+>>> Output files successfully created.
+ #Write ouput : 5.382
+
