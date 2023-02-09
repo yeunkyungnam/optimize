@@ -1,0 +1,4254 @@
+ (!*******************************************************
+  * Annual & Supply Planning of TSRC                    *
+  * ================================                    *
+  *                                                     *
+  * GSC_ASP.mos                                         *
+  * ```````````                                         *
+  * Production Planning of Maximizing Criteria          *
+  *                                                     *
+  * Date: 2016.5                                        *
+  * Author: Jsoon Choi, Optiware                        *
+  *******************************************************!)
+model "GSC_ASP"
+  uses 'mmxprs', 'mmsystem', 'mmjobs'
+  options noimplicit
+
+
+  declarations
+    DATA_PATH: string		! Data file directory
+    RESULT_PATH: string		! Result file directory
+    DEBUG_READ = true		! Debug flag for read validation
+
+    SYNC_PROD: string		! Activation flag of synchronized production
+    SYNC_LINE1: string		! Fist line name of synchronized production
+    SYNC_LINE2: string		! Second line name of synchronized production
+
+    MAXNODE = 1000000		! Maximum B&B node of each version
+    ZEROVALUE = 0.000001	! Zero tolerance
+
+    ALLOW_P1_SVC_RATE: real	! Allowance of service level relaxation rate at Phase-1
+    ALLOW_P2_SVC_RATE: real	! Allowance of service level relaxation rate at Phase-2
+    ALLOW_P2_INV_RATE: real	! Allowance of inventory level relaxation rate at Phase-2
+    ALLOW_P3_INV_RATE: real	! Allowance of inventory level relaxation rate at Phase-3
+    P3_1ST_MIPRELSTOP: real	! MIP termination condition at first Phase-3
+    P3_2ND_MIPRELSTOP: real	! MIP termination condition at second Phase-3
+
+    UTILIZE_MONTH = 2		! Prioritized month length at MAX_UTILIZATION phase
+
+    RALT = 1..100			! Range of alternative plant, line, item
+
+    WGT_SUB_MAKE: real		! Weight of Sub_Make objectives
+    WGT_SUB_PROD: real		! Weight of Sub_Prod objectives
+    WGT_SUB_ALT: real		! Weight of Sub_Alt objectives
+    WGT_SUB_EXCH: real		! Weight of Sub_Exch objectives
+    WGT_SUB_Inv: real		! Weight of Sub_Inv objectives
+    WGT_SUB_SuppInv: real	! Weight of Sub_Supp_Inv objectives
+    WGT_SUB_Trans: real		! Weight of Sub_Trans objectives
+  end-declarations
+
+
+  initializations from 'c:/ZIONEX/TSRC_SP/GSC_ASP/OptionAdm.in'
+  !initializations from 'OptionAdm.in'
+    DATA_PATH
+    RESULT_PATH
+
+    SYNC_PROD
+    SYNC_LINE1
+    SYNC_LINE2
+
+    ALLOW_P1_SVC_RATE
+    ALLOW_P2_SVC_RATE
+    ALLOW_P2_INV_RATE
+    ALLOW_P3_INV_RATE
+
+    P3_1ST_MIPRELSTOP
+    P3_2ND_MIPRELSTOP
+  end-initializations
+
+
+  writeln
+  writeln("Data file directory   : ", DATA_PATH)
+  writeln("Result file directory : ", RESULT_PATH)
+(!
+  writeln("Activation flag of synchronized production  : ", SYNC_PROD)
+  writeln("Fist line name of synchronized production   : ", SYNC_LINE1)
+  writeln("Second line name of synchronized production : ", SYNC_LINE2)
+!)
+
+
+  declarations
+    _i1,_i2,_i3,_i4,_i5,_i6,_i7,_i8,_i9 : integer	! integer read data
+    _s1,_s2,_s3,_s4,_s5,_s6,_s7,_s8,_s9 : string	! string read data
+    _r1,_r2,_r3,_r4,_r5,_r6,_r7,_r8,_r9 : real		! real read data
+  end-declarations
+
+
+  declarations
+    PLANT: set of string					! Plant name
+    LINE: set of string						! Line name
+    LINE_PLANT: array(LINE) of string		! Plant which the line is located
+    LINE_PRIORITY: array(LINE) of real		! Line priority
+    SUPPLY: set of string					! Supply-point name
+    MATERIAL: set of string					! Material name
+    REGION: set of string					! Region name
+
+    MGRADE: set of string					! Main grade name
+    GRADE: set of string					! Grade name
+    GRADE_MGRADE: array(GRADE) of string	! Main grade which the grade is included
+    GRADE_PRIORITY: array(GRADE) of real	! Grade priority
+    ITEM: set of string						! Item name
+    ITEM_GRADE: array(ITEM) of string		! Grade which the item is included
+    ITEM_PRIORITY: array(ITEM) of real		! Item priority
+
+    MONTH: range							! Month sequence
+    MONTHNAME: array(MONTH) of string		! Month name
+    MONTH_PRIORITY1: array(MONTH) of real	! Month priority at phase 1
+    MONTH_PRIORITY2: array(MONTH) of real	! Month priority at phase 2
+    MONTH_PRIORITY3: array(MONTH) of real	! Month priority at phase 3
+    MONTH_PRIORITY4: array(MONTH) of real	! Month priority at phase 4
+  end-declarations
+
+
+! Check plant is in the master data
+  function check_plant(p:string):boolean
+    if p in PLANT then
+       returned := true
+    else
+       returned := false
+       writeln("> PLANT ", p, " is not defined")
+    end-if
+  end-function
+
+
+! Check line is in the master data
+  function check_line(l:string):boolean
+    if l in LINE then
+       returned := true
+    else
+       returned := false
+       writeln("> LINE ", l, " is not defined")
+    end-if
+  end-function
+
+
+! Check supply is in the master data
+  function check_supply(s:string):boolean
+    if s in SUPPLY then
+       returned := true
+    else
+       returned := false
+       writeln("> SUPPLY ", s, " is not defined")
+    end-if
+  end-function
+
+
+! Check material is in the master data
+  function check_material(m:string):boolean
+    if m in MATERIAL then
+       returned := true
+    else
+       returned := false
+       writeln("> MATERIAL ", m, " is not defined")
+    end-if
+  end-function
+
+
+! Check region is in the master data
+  function check_region(r:string):boolean
+    if r in REGION then
+       returned := true
+    else
+       returned := false
+       writeln("> REGION ", r, " is not defined")
+    end-if
+  end-function
+
+
+! Check main grade is in the master data
+  function check_mgrade(mg:string):boolean
+    if mg in MGRADE then
+       returned := true
+    else
+       returned := false
+       writeln("> MGRADE ", mg, " is not defined")
+    end-if
+  end-function
+
+
+! Check grade is in the master data
+  function check_grade(g:string):boolean
+    if g in GRADE then
+       returned := true
+    else
+       returned := false
+       writeln("> GRADE ", g, " is not defined")
+    end-if
+  end-function
+
+
+! Check item is in the master data
+  function check_item(i:string):boolean
+    if i in ITEM then
+       returned := true
+    else
+       returned := false
+       writeln("> ITEM ", i, " is not defined")
+    end-if
+  end-function
+
+
+! Check two items are same main grade
+  function check_samemgrade(i:string, i2:string):boolean
+    if GRADE_MGRADE(ITEM_GRADE(i)) = GRADE_MGRADE(ITEM_GRADE(i2)) then
+       returned := true
+    else
+       returned := false
+       writeln("> NOT SAME MAIN GRADE ", i, " and ", i2)
+    end-if
+  end-function
+
+
+! Check month is in the master data
+  function check_month(tname:string):boolean
+    forall (t in MONTH | MONTHNAME(t) = tname) do
+       returned := true
+       break
+    end-do
+
+    if not returned then
+       writeln("> MONTH ", tname, " is not defined")
+    end-if
+  end-function
+
+
+! Return month sequence in the master data
+  function get_month(tname:string):integer
+    forall (t in MONTH | MONTHNAME(t) = tname) do
+       returned := t
+       break
+    end-do
+  end-function
+
+
+! Read plant master data
+  procedure read_plant
+    fopen(DATA_PATH+"plant.in", F_INPUT)
+    readln(_s1)
+    while (getparam("nbread") = 1) do
+      PLANT += {_s1}
+      readln(_s1)
+    end-do
+    finalize(PLANT)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("PLANT",5), "\n", 5*"-")
+       forall (p in PLANT)
+         writeln(strfmt(p,5))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read line master data and its plant
+  procedure read_line
+    declarations
+      PRIORITY: real
+    end-declarations
+
+    fopen(DATA_PATH+"line.in", F_INPUT)
+    readln(_s1, _s2)
+    PRIORITY := 1.0
+    while (getparam("nbread") = 2) do
+      if check_plant(_s2) then
+         LINE += {_s1}
+         LINE_PLANT(_s1) := _s2
+         LINE_PRIORITY(_s1) := PRIORITY
+         PRIORITY += 1.0
+      end-if
+
+      readln(_s1, _s2)
+    end-do
+    finalize(LINE)
+    fclose(F_INPUT)
+
+    LINE_PRIORITY("NT_SIS-LINE") := LINE_PRIORITY("NT_SIS-LINE")/100
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("LINE",12), " ", strfmt("PLANT",5), " ",
+               strfmt("PRIORITY",10), "\n", 29*"-")
+       forall (l in LINE)
+        writeln(strfmt(l,12), " ", strfmt(LINE_PLANT(l),5), " ",
+                strfmt(LINE_PRIORITY(l),10))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read supply master data
+  procedure read_supply
+    fopen(DATA_PATH+"supply.in", F_INPUT)
+    readln(_s1)
+    while (getparam("nbread") = 1) do
+      SUPPLY += {_s1}
+      readln(_s1)
+    end-do
+    finalize(SUPPLY)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("SUPPLY",6), "\n", 6*"-")
+       forall (s in SUPPLY)
+         writeln(strfmt(s,6))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read material master data
+  procedure read_material
+    fopen(DATA_PATH+"material.in", F_INPUT)
+    readln(_s1)
+    while (getparam("nbread") = 1) do
+      MATERIAL += {_s1}
+      readln(_s1)
+    end-do
+    finalize(MATERIAL)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("MATERIAL",10), "\n", 10*"-")
+       forall (m in MATERIAL)
+         writeln(strfmt(m,10))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read region master data
+  procedure read_region
+    fopen(DATA_PATH+"region.in", F_INPUT)
+    readln(_s1)
+    while (getparam("nbread") = 1) do
+      REGION += {_s1}
+      readln(_s1)
+    end-do
+    finalize(REGION)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("REGION",8), "\n", 8*"-")
+       forall (r in REGION)
+         writeln(strfmt(r,8))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read main grade master data
+  procedure read_mgrade
+    fopen(DATA_PATH+"mgrade.in", F_INPUT)
+    readln(_s1)
+    while (getparam("nbread") = 1) do
+      MGRADE += {_s1}
+      readln(_s1)
+    end-do
+    finalize(MGRADE)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("MGRADE",6), "\n", 6*"-")
+       forall (mg in MGRADE)
+         writeln(strfmt(mg,6))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read grade master data and its main grade
+  procedure read_grade
+    declarations
+      PRIORITY: real
+    end-declarations
+
+    fopen(DATA_PATH+"grade.in", F_INPUT)
+    readln(_s1, _s2)
+    PRIORITY := 1.0
+    while (getparam("nbread") = 2) do
+      if check_mgrade(_s2) then
+         GRADE += {_s1}
+         GRADE_MGRADE(_s1) := _s2
+         GRADE_PRIORITY(_s1) := PRIORITY
+         PRIORITY += 1.0
+      end-if
+
+      readln(_s1, _s2)
+    end-do
+    finalize(GRADE)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("GRADE",11), " ", strfmt("MGRADE",6), " ",
+               strfmt("PRIORITY",10), "\n", 29*"-")
+       forall (g in GRADE)
+         writeln(strfmt(g,11), " ", strfmt(GRADE_MGRADE(g),6), " ",
+                 strfmt(GRADE_PRIORITY(g),10))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read item master data
+  procedure read_item
+    declarations
+      PRIORITY: real
+    end-declarations
+
+    fopen(DATA_PATH+"item.in", F_INPUT)
+    readln(_s1, _s2)
+    PRIORITY := 100.0
+    while (getparam("nbread") = 2) do
+      if check_grade(_s2) then
+         ITEM += {_s1}
+         ITEM_GRADE(_s1) := _s2
+         ITEM_PRIORITY(_s1) := PRIORITY
+         PRIORITY += 1.0
+      end-if
+
+      readln(_s1, _s2)
+    end-do
+    finalize(ITEM)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("ITEM",8), " ", strfmt("GRADE",11), " ",
+               strfmt("PRIORITY",10), "\n", 31*"-")
+       forall (i in ITEM)
+         writeln(strfmt(i,8), " ", strfmt(ITEM_GRADE(i),11), " ",
+                 strfmt(ITEM_PRIORITY(i),10))
+       writeln
+    end-if
+  end-procedure
+
+
+! Read month master data
+  procedure read_month
+    fopen(DATA_PATH+"month.in", F_INPUT)
+    readln(_i1, _s2, _r3, _r4, _r5, _r6)
+    while (getparam("nbread") = 6) do
+      MONTHNAME(_i1) := _s2
+      MONTH_PRIORITY1(_i1) := _r3
+      MONTH_PRIORITY2(_i1) := _r4
+      MONTH_PRIORITY3(_i1) := _r5
+      MONTH_PRIORITY4(_i1) := _r6
+      readln(_i1, _s2, _r3, _r4, _r5, _r6)
+    end-do
+    finalize(MONTH)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+       writeln
+       writeln(strfmt("SEQ",3), " ", strfmt("MONTH",6), " ",
+               strfmt("PRIOR1",6), " ", strfmt("PRIOR2",6), " ",
+               strfmt("PRIOR3",6), " ", strfmt("PRIOR4",6), "\n", 38*"-")
+       forall (t in MONTH)
+         writeln(strfmt(t,3), " ", strfmt(MONTHNAME(t),6), " ",
+                 strfmt(MONTH_PRIORITY1(t),6,1), " ", strfmt(MONTH_PRIORITY2(t),6,1), " ",
+                 strfmt(MONTH_PRIORITY3(t),6,1), " ", strfmt(MONTH_PRIORITY4(t),6,1))
+       writeln
+    end-if
+  end-procedure
+
+
+  declarations
+    PLANTYPE: string		! Plan type AP(Annual Plan) or SP(Supply Plan)
+    MAXTIME: integer		! Maximum time of each version (seconds)
+
+    MAX_SPREAD: string		! Activation flag of maximize spread version
+    MAX_MARGIN: string		! Activation flag of maximize margin version
+    MAX_SUPPLY: string		! Activation flag of maximize supply version
+    MAX_UTILIZATION: string	! Activation flag of maximize utilization version
+
+    LATE_DELIVERY: integer	! Maximum delayed month for late delivery
+    RM_CAPA: integer		! Month duration of raw material capacity applied
+    PROD_CAPA: string		! Activation flag of production capacity constraints
+    REGION_CAPA: string		! Activation flag of region distribution constraints
+
+    MIN_INVENTORY_MOVEMENT: real	! Weight for minimizing unnecessary transfer quantity
+  end-declarations
+
+
+! Read options
+  procedure read_option
+    initializations from DATA_PATH+"option.in"
+      PLANTYPE
+      MAXTIME
+
+      MAX_SPREAD MAX_MARGIN MAX_SUPPLY MAX_UTILIZATION
+
+      LATE_DELIVERY
+      RM_CAPA
+      PROD_CAPA
+      REGION_CAPA
+
+      MIN_INVENTORY_MOVEMENT
+    end-initializations
+
+    if MIN_INVENTORY_MOVEMENT < 0.5 then
+       MIN_INVENTORY_MOVEMENT := 0.5
+    end-if
+
+    if PLANTYPE = "AP" then
+       ALLOW_P2_INV_RATE := ALLOW_P2_INV_RATE*2
+       ALLOW_P3_INV_RATE := ALLOW_P3_INV_RATE*2
+    end-if
+
+    if MAXTIME > 0 then
+       MAXTIME := -MAXTIME
+    end-if
+
+    writeln
+    writeln(PLANTYPE, ": Plan type AP(Annual Plan) or SP(Supply Plan)")
+    writeln(MAXTIME, ": Maximum time of each version (seconds)")
+    writeln(MAX_SPREAD, ": Activation flag of maximize spread version")
+    writeln(MAX_MARGIN, ": Activation flag of maximize margin version")
+    writeln(MAX_SUPPLY, ": Activation flag of maximize supply version")
+    writeln(MAX_UTILIZATION, ": Activation flag of maximize utilization version")
+    writeln(LATE_DELIVERY, ": Maximum delayed month for late delivery")
+    writeln(RM_CAPA, ": Month duration of raw material capacity applied")
+    writeln(PROD_CAPA, ": Activation flag of production capacity constraints")
+    writeln(REGION_CAPA, ": Activation flag of region distribution constraints")
+    writeln(MIN_INVENTORY_MOVEMENT, ": Weight of inventory movement control")
+  end-procedure
+
+
+! Read weight options
+  procedure read_optionwgt
+    initializations from DATA_PATH+"optionwgt.in"
+      WGT_SUB_MAKE
+      WGT_SUB_PROD
+      WGT_SUB_ALT
+      WGT_SUB_EXCH
+      WGT_SUB_Inv
+      WGT_SUB_SuppInv
+      WGT_SUB_Trans
+    end-initializations
+
+    writeln
+    writeln("WGT_SUB_MAKE ", WGT_SUB_MAKE)
+    writeln("WGT_SUB_PROD ", WGT_SUB_PROD)
+    writeln("WGT_SUB_ALT  ", WGT_SUB_ALT)
+    writeln("WGT_SUB_EXCH ", WGT_SUB_EXCH)
+    writeln("WGT_SUB_Inv  ", WGT_SUB_Inv)
+    writeln("WGT_SUB_SuppInv ", WGT_SUB_SuppInv)
+    writeln("WGT_SUB_Tran ", WGT_SUB_Trans)
+  end-procedure
+
+
+! Read master data
+  fopen(RESULT_PATH+"val_master.out", F_OUTPUT)
+  read_plant
+  read_line
+  read_supply
+  read_material
+  read_region
+  read_mgrade
+  read_grade
+  read_item
+  read_month
+  fclose(F_OUTPUT)
+
+  read_option
+  read_optionwgt
+
+
+  declarations
+    NORDER: integer									! Number of order
+    ORDER: range									! Range of order
+    ORDER_NAME: array(ORDER) of string				! Name of order o
+    ORDER_REGION: array(ORDER) of string			! Region of order o
+    ORDER_SUPPLY: array(ORDER) of string			! Supply-point of order o
+    ORDER_PLANT: array(ORDER) of string				! Plant of order o
+    ORDER_PRIORITY: array(ORDER) of real			! Order priority of order o
+    ORDER_PRIORITY2: array(ORDER) of real			! Order priority2 of order o
+    ORDER_ITEM: array(ORDER) of string				! Item of order o
+    ORDER_MONTH: array(ORDER) of integer			! Month of order o
+    ORDER_MAXQTY: array(ORDER) of real				! Forecasted quantity of order o
+    ORDER_MINQTY: array(ORDER) of real				! Minimum required quantity of order o
+    ORDER_AMOUNT: array(ORDER) of real				! Sales price of order o
+    ORDER_FREIGHTCOST: array(ORDER) of real			! Freight cost of order o
+    ORDER_REBATECOST: array(ORDER) of real			! Rebate cost of order o
+    ORDER_COMMISSIONCOST: array(ORDER) of real		! Commission cost of order o
+    ORDER_OTHERVARIABLECOST: array(ORDER) of real	! Other variable cost of order o
+    ORDER_SALESTYPECOST: array(ORDER) of real		! Sales type cost of order o
+    ORDER_SPREAD: array(ORDER) of real				! totSpread of order o
+    ORDER_MARGIN: array(ORDER) of real				! Contribution margin of order o
+
+    ORDER_SP: array(ORDER) of string				! Spec of order o
+
+    LINEITEM: array(LINE,ITEM) of boolean			! Item capability of line
+    LINEDAYS: array(LINE,MONTH) of real				! Available production days of line
+    LINECDAYS: array(LINE,MONTH) of real			! Calendar days of line
+    LINEASSIGN: array(LINE,MGRADE,MONTH) of real	! Assigned days of main grade for each line
+    LINERATE: array(LINE,GRADE,MONTH) of real		! Production rate per day
+    LINEWIDEOFF: array(LINE,GRADE,MONTH) of real	! Wide-off rate per day
+    MAKE_PRIORITY: array(LINE,GRADE,MONTH) of real	! Line-Grade-Month (Make) priority
+
+    GRADEMINDAYS: array(LINE,GRADE) of integer		! Minimum days if the grade is produced
+    GRADEMAXDAYS: array(LINE,GRADE) of integer		! Maximum days if the grade is produced
+    GRADETIME12M: array(LINE,GRADE) of integer		! Times of the grade during 12 months
+    GRADETIME6M: array(LINE,GRADE) of integer		! Times of the grade during 6 months
+
+    ITEMLIFE: array(ITEM) of integer				! End month of item valid to produce
+    ITEMQTY: array(ITEM) of real					! Ordered maxqty by item
+
+    REGIONRATIOMSL: array(MGRADE,REGION,MONTH) of real	! Minimum regional required ratio for P-1 (%)
+    REGIONRATIO: array(MGRADE,REGION,MONTH) of real		! Minimum regional required ratio for P-2,3,4 (%)
+
+    MTRLCOST: array(PLANT,MATERIAL,MONTH) of real		! Material cost
+    MTRLONHAND: array(PLANT,MATERIAL) of real			! Material on-hand(initial) inventory
+    MTRLONHANDCOST: array(PLANT,MATERIAL) of real		! Unit cost of Material on-hand
+    MTRLPLANNED: array(PLANT,MATERIAL,MONTH) of real	! Material planned inventory
+    MTRLPLANNEDCOST: array(PLANT,MATERIAL,MONTH) of real	! Unit cost of Material planned
+    MTRLBOM: array(PLANT,GRADE,MATERIAL,MONTH) of real	! Material consuming quantity
+
+    INVMIN: array(SUPPLY,ITEM,MONTH) of real			! Minimum safety stock quantity
+    INVMAX: array(SUPPLY,ITEM,MONTH) of real			! Maximum safety stock quantity
+    INITINV: array(PLANT,SUPPLY,ITEM) of real			! Initial inventory quantity
+    INITINVCOST: array(PLANT,SUPPLY,ITEM) of real		! Unit cost of Initial inventory
+    COMMINV: array(PLANT,ITEM) of real					! Initial common inventory quantity
+    COMMINVCOST: array(PLANT,ITEM) of real				! Unit cost of Initial common inventory
+    TRANSLT: array(PLANT,SUPPLY) of integer				! Transfer lead duration (months)
+    INITTRANS: array(PLANT,SUPPLY,ITEM,MONTH) of real	! Initial transfer quantity
+    INITTRANSCOST: array(PLANT,SUPPLY,ITEM,MONTH) of real	! Unit cost of Initial transfer
+
+    SPEC: set of string									! Spec list
+    SPEC_ITEMLIST: set of string						! Spec item list
+    INITINV_SP: array(PLANT,SUPPLY,ITEM,SPEC) of real	! Initial spec inventory quantity
+    INITINVCOST_SP: array(PLANT,SUPPLY,ITEM,SPEC) of real		! Unit cost of initial spec inventory
+    INITTRANS_SP: array(PLANT,SUPPLY,ITEM,SPEC,MONTH) of real	! Initial spec transfer quantity (null)
+
+    FIXQTY: array(LINE,GRADE,MONTH) of real				! Fixed quantity
+    FIXDAY: array(LINE,GRADE,MONTH) of real				! Fixed duration(days)
+
+    REPKG_ITEMLIST: array(PLANT,ITEM) of set of string	! Repackagable item list
+
+    EXCHITEM: array(ITEM) of set of string				! Exchangable item list
+    EXCH_PRIORITY: array(ITEM,ITEM) of real				! Exchangable item priority
+    EXCH_ALLITEMLIST: set of string						! All of exchangable item list
+
+    ALT_CNT: array(ORDER) of integer					! Count of alternative plant of order
+    ALT_PLANT: array(ORDER) of array(RALT) of string	! Alternative plant of order
+    ALT_LINE: array(ORDER) of array(RALT) of string		! Alternative line of order
+    ALT_ITEM: array(ORDER) of array(RALT) of string		! Alternative item of order
+    ALT_PRIORITY: array(RALT) of real					! Alternative priority
+  end-declarations
+
+
+! Read order data
+  procedure read_order
+    declarations
+      _pr1,_pr2 : real		! real read data
+    end-declarations
+
+    fopen(DATA_PATH+"order.in", F_INPUT)
+    readln(_s1, _s2, _s3, _s4, _pr1, _pr2, _s6, _s7, _r1, _r2, _r3, _r4, _r5, _r6, _r7, _r8)
+    while (getparam("nbread") = 16) do
+      if check_region(_s2) and check_supply(_s3) and check_plant(_s4) and
+         check_item(_s6) and check_month(_s7) then
+         NORDER += 1
+         ORDER_NAME(NORDER) := _s1
+         ORDER_REGION(NORDER) := _s2
+         ORDER_SUPPLY(NORDER) := _s3
+         ORDER_PLANT(NORDER) := _s4
+         ORDER_PRIORITY(NORDER) := _pr1
+         ORDER_PRIORITY2(NORDER) := _pr2
+         ORDER_ITEM(NORDER) := _s6
+         ORDER_MONTH(NORDER) := get_month(_s7)
+         ORDER_MAXQTY(NORDER) := _r1
+         ORDER_MINQTY(NORDER) := _r2
+         ORDER_AMOUNT(NORDER) := _r3
+         ORDER_FREIGHTCOST(NORDER) := _r4
+         ORDER_REBATECOST(NORDER) := _r5
+         ORDER_COMMISSIONCOST(NORDER) := _r6
+         ORDER_OTHERVARIABLECOST(NORDER) := _r7
+         ORDER_SALESTYPECOST(NORDER) := _r8
+         ORDER_SPREAD(NORDER) := ORDER_AMOUNT(NORDER) - ORDER_FREIGHTCOST(NORDER) -
+                                 ORDER_REBATECOST(NORDER) - ORDER_COMMISSIONCOST(NORDER)
+         ORDER_MARGIN(NORDER) := ORDER_SPREAD(NORDER) - ORDER_OTHERVARIABLECOST(NORDER) -
+                                 ORDER_SALESTYPECOST(NORDER)
+      end-if
+    readln(_s1, _s2, _s3, _s4, _pr1, _pr2, _s6, _s7, _r1, _r2, _r3, _r4, _r5, _r6, _r7, _r8)
+    end-do
+    finalize(ORDER)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("ORDER")
+    writeln(strfmt("ORDER",5), " ", strfmt("REGION",8), " ",
+            strfmt("SUPPLY",6), " ", strfmt("PLANT",5), " ",
+            strfmt("ITEM",8), " ", strfmt("MONTH",6), " ",
+            strfmt("PRIORITY",8), " ", strfmt("PRIORITY",8), " ", strfmt("MAXQTY",6), " ",
+            strfmt("MINQTY",6), " ", strfmt("AMOUNT",6), " ",
+            strfmt("SPREAD",6), " ", strfmt("MARGIN",6), "\n", 96*"-")
+    forall (o in ORDER)
+      writeln(strfmt(ORDER_NAME(o),5), " ",
+              strfmt(ORDER_REGION(o),8), " ",
+              strfmt(ORDER_SUPPLY(o),6), " ",
+              strfmt(ORDER_PLANT(o),5), " ",
+              strfmt(ORDER_ITEM(o),8), " ",
+              strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ",
+              strfmt(ORDER_PRIORITY(o),8,1), " ",
+              strfmt(ORDER_PRIORITY2(o),8,1), " ",
+              strfmt(ORDER_MAXQTY(o),6,0), " ",
+              strfmt(ORDER_MINQTY(o),6,0), " ",
+              strfmt(ORDER_AMOUNT(o),6,0), " ",
+              strfmt(ORDER_SPREAD(o),6,0), " ",
+              strfmt(ORDER_MARGIN(o),6,0))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read SP order data
+  procedure read_ordersp
+    fopen(DATA_PATH+"order_spec.in", F_INPUT)
+    readln(_s1, _s2, _s3)
+    while (getparam("nbread") = 3) do
+      if check_item(_s2) then
+         SPEC += {_s3}
+         SPEC_ITEMLIST += {_s2}
+         forall (o in ORDER | ORDER_NAME(o)=_s1 and ORDER_ITEM(o)=_s2)
+           ORDER_SP(o) := _s3
+      end-if
+    readln(_s1, _s2, _s3)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("ORDER_SP")
+    writeln(strfmt("ORDER",5), " ", strfmt("ITEM",8), " ", strfmt("SPEC",6), "\n", 21*"-")
+    forall (o in ORDER | ORDER_SP(o)<>"")
+      writeln(strfmt(ORDER_NAME(o),5), " ",
+              strfmt(ORDER_ITEM(o),8), " ",
+              strfmt(ORDER_SP(o),6))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read line and its possible item data
+  procedure read_lineitem
+    fopen(DATA_PATH+"lineitem.in", F_INPUT)
+    readln(_s1, _s2)
+    while (getparam("nbread") = 2) do
+      if check_line(_s1) and check_item(_s2) then
+         LINEITEM(_s1, _s2) := true
+      end-if
+
+      readln(_s1, _s2)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("LINEITEM")
+    writeln(strfmt("LINE",12), " ", strfmt("ITEM",8), "\n", 21*"-")
+    forall (l in LINE, i in ITEM | LINEITEM(l,i))
+      writeln(strfmt(l,12), " ", strfmt(i,8))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read line days data
+  procedure read_linedays
+    fopen(DATA_PATH+"linedays.in", F_INPUT)
+    readln(_s1, _s2, _r3, _r4)
+    while (getparam("nbread") = 4) do
+      if check_line(_s1) and check_month(_s2) then
+         LINEDAYS(_s1, get_month(_s2)) := _r3
+         LINECDAYS(_s1, get_month(_s2)) := _r4
+      end-if
+
+      readln(_s1, _s2, _r3, _r4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("LINEDAYS")
+    writeln(strfmt("LINE",12), " ", strfmt("MONTH",6), " ",
+            strfmt("DAYS",5), " ", strfmt("CAL",5), "\n", 31*"-")
+    forall (l in LINE, t in MONTH | LINEDAYS(l,t) > ZEROVALUE)
+      writeln(strfmt(l,12), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(LINEDAYS(l,t),5,2), " ", strfmt(LINECDAYS(l,t),5,2))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read line assign data
+  procedure read_lineassign
+    fopen(DATA_PATH+"lineassign.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4)
+    while (getparam("nbread") = 4) do
+      if check_line(_s1) and check_mgrade(_s2) and check_month(_s3) then
+         LINEASSIGN(_s1, _s2, get_month(_s3)) := _r4
+      end-if
+
+      readln(_s1, _s2, _s3, _r4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("LINEASSIGN")
+    writeln(strfmt("LINE",12), " ", strfmt("MGRADE",6), " ", strfmt("MONTH",6), " ",
+            strfmt("ASSIGN",6), "\n", 33*"-")
+    forall (l in LINE, mg in MGRADE, t in MONTH | LINEASSIGN(l,mg,t) > ZEROVALUE)
+      writeln(strfmt(l,12), " ", strfmt(mg,6), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(LINEASSIGN(l,mg,t),6,2))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read line rate data
+  procedure read_linerate
+    declarations
+      PRIORITY: real
+    end-declarations
+
+    fopen(DATA_PATH+"linerate.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4, _r5)
+    while (getparam("nbread") = 5) do
+      if check_line(_s1) and check_grade(_s2) and check_month(_s3) then
+         LINERATE(_s1, _s2, get_month(_s3)) := _r4
+         LINEWIDEOFF(_s1, _s2, get_month(_s3)) := _r5
+      end-if
+
+      readln(_s1, _s2, _s3, _r4, _r5)
+    end-do
+    fclose(F_INPUT)
+
+    PRIORITY := 100.0
+    forall (l in LINE, g in GRADE, t in MONTH | LINERATE(l,g,t) > ZEROVALUE) do
+      MAKE_PRIORITY(l,g,t) := PRIORITY
+      PRIORITY += 1.0
+    end-do
+
+    if DEBUG_READ then
+    writeln
+    writeln("LINERATE")
+    writeln(strfmt("LINE",12), " ", strfmt("GRADE",11), " ", strfmt("MONTH",6), " ",
+            strfmt("RATE",4), " ", strfmt("WIDEOFF",7), " ", strfmt("PRIORITY",10), "\n", 55*"-")
+    forall (l in LINE, g in GRADE, t in MONTH |
+      LINERATE(l,g,t) > ZEROVALUE or LINEWIDEOFF(l,g,t) > ZEROVALUE)
+      writeln(strfmt(l,12), " ", strfmt(g,11), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(LINERATE(l,g,t),4,0), " ", strfmt(LINEWIDEOFF(l,g,t),7,2), " ",
+              strfmt(MAKE_PRIORITY(l,g,t),10))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read line grade data
+  procedure read_linegrade
+    fopen(DATA_PATH+"linegrade.in", F_INPUT)
+    readln(_s1, _s2, _i3, _i4, _i5, _i6)
+    while (getparam("nbread") = 6) do
+      if check_line(_s1) and check_grade(_s2) then
+         GRADEMINDAYS(_s1, _s2) := _i3
+         GRADEMAXDAYS(_s1, _s2) := _i4
+         GRADETIME12M(_s1, _s2) := _i5
+         GRADETIME6M(_s1, _s2) := _i6
+      end-if
+
+      readln(_s1, _s2, _i3, _i4, _i5, _i6)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("LINEGRADE")
+    writeln(strfmt("LINE",12), " ", strfmt("GRADE",11), " ", strfmt("MINDAYS",7), " ",
+            strfmt("MAXDAYS",7), " ", strfmt("TIME12M",7), " ",
+            strfmt("TIME6M",6), "\n", 55*"-")
+    forall (l in LINE, g in GRADE | GRADEMINDAYS(l,g) > 0 or GRADEMAXDAYS(l,g) > 0 or
+      GRADETIME12M(l,g) > 0 or GRADETIME6M(l,g) > 0)
+      writeln(strfmt(l,12), " ", strfmt(g,11), " ", strfmt(GRADEMINDAYS(l,g),7), " ",
+              strfmt(GRADEMAXDAYS(l,g),7), " ", strfmt(GRADETIME12M(l,g),7), " ",
+              strfmt(GRADETIME6M(l,g),6))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read item life data
+  procedure read_itemlife
+    fopen(DATA_PATH+"itemlife.in", F_INPUT)
+    readln(_s1, _s2)
+    while (getparam("nbread") = 2) do
+      if check_item(_s1) and check_month(_s2) then
+         ITEMLIFE(_s1) := get_month(_s2)
+      end-if
+
+      readln(_s1, _s2)
+    end-do
+    fclose(F_INPUT)
+
+    forall (o in ORDER)
+      ITEMQTY(ORDER_ITEM(o)) += ORDER_MAXQTY(o)
+
+    if DEBUG_READ then
+    writeln
+    writeln("ITEMLIFE")
+    writeln(strfmt("ITEM",8), " ", strfmt("MONTH",6), "\n", 15*"-")
+    forall (i in ITEM | ITEMLIFE(i) > 0)
+      writeln(strfmt(i,8), " ", strfmt(MONTHNAME(ITEMLIFE(i)),6))
+    writeln
+
+    writeln
+    writeln("ITEMQTY")
+    writeln(strfmt("ITEM",8), " ", strfmt("QTY",6), "\n", 15*"-")
+    forall (i in ITEM | ITEMQTY(i) > 0)
+      writeln(strfmt(i,8), " ", strfmt(ITEMQTY(i),6))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read region ratio of msl data
+  procedure read_regionratiomsl
+    fopen(DATA_PATH+"regionratiomsl.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4)
+    while (getparam("nbread") = 4) do
+      if check_mgrade(_s1) and check_region(_s2) and check_month(_s3) then
+         REGIONRATIOMSL(_s1, _s2, get_month(_s3)) := _r4		! Percentage
+      end-if
+
+      readln(_s1, _s2, _s3, _r4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("REGIONRATIOMSL")
+    writeln(strfmt("MGRADE",6), " ", strfmt("REGION",8), " ", strfmt("MONTH",6), " ",
+            strfmt("RATIO",5), "\n", 28*"-")
+    forall (mg in MGRADE, r in REGION, t in MONTH | REGIONRATIOMSL(mg,r,t) > ZEROVALUE)
+      writeln(strfmt(mg,6), " ", strfmt(r,8), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(REGIONRATIOMSL(mg,r,t),5,2))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read region ratio data
+  procedure read_regionratio
+    fopen(DATA_PATH+"regionratio.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4)
+    while (getparam("nbread") = 4) do
+      if check_mgrade(_s1) and check_region(_s2) and check_month(_s3) then
+         REGIONRATIO(_s1, _s2, get_month(_s3)) := _r4		! Percentage
+      end-if
+
+      readln(_s1, _s2, _s3, _r4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("REGIONRATIO")
+    writeln(strfmt("MGRADE",6), " ", strfmt("REGION",8), " ", strfmt("MONTH",6), " ",
+            strfmt("RATIO",5), "\n", 28*"-")
+    forall (mg in MGRADE, r in REGION, t in MONTH | REGIONRATIO(mg,r,t) > ZEROVALUE)
+      writeln(strfmt(mg,6), " ", strfmt(r,8), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(REGIONRATIO(mg,r,t),5,2))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read material cost data
+  procedure read_mtrlcost
+    fopen(DATA_PATH+"mtrlcost.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4)
+    while (getparam("nbread") = 4) do
+      if check_plant(_s1) and check_material(_s2) and check_month(_s3) then
+         MTRLCOST(_s1, _s2, get_month(_s3)) := _r4
+      end-if
+
+      readln(_s1, _s2, _s3, _r4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("MTRLCOST")
+    writeln(strfmt("PLANT",5), " ", strfmt("MATERIAL",10), " ", strfmt("MONTH",6), " ",
+            strfmt("COST",6), "\n", 30*"-")
+    forall (p in PLANT, m in MATERIAL, t in MONTH | MTRLCOST(p,m,t) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(m,10), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(MTRLCOST(p,m,t),6,0))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read material on-hand inventory data
+  procedure read_mtrlonhand
+    fopen(DATA_PATH+"mtrlonhand.in", F_INPUT)
+    readln(_s1, _s2, _r3, _r4)
+    while (getparam("nbread") = 4) do
+      if check_plant(_s1) and check_material(_s2) then
+         MTRLONHAND(_s1, _s2) := _r3
+         MTRLONHANDCOST(_s1, _s2) := _r4
+      end-if
+
+      readln(_s1, _s2, _r3, _r4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("MTRLONHAND")
+    writeln(strfmt("PLANT",5), " ", strfmt("MATERIAL",10), " ", strfmt("ONHAND",6), " ",
+            strfmt("COST",10), "\n", 34*"-")
+    forall (p in PLANT, m in MATERIAL | MTRLONHAND(p,m) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(m,10), " ", strfmt(MTRLONHAND(p,m),6,1), " ",
+              strfmt(MTRLONHANDCOST(p,m),10))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read material planned quantity data
+  procedure read_mtrlplanned
+    fopen(DATA_PATH+"mtrlplanned.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4, _r5)
+    while (getparam("nbread") = 5) do
+      if check_plant(_s1) and check_material(_s2) and check_month(_s3) then
+         MTRLPLANNED(_s1, _s2, get_month(_s3)) := _r4
+         MTRLPLANNEDCOST(_s1, _s2, get_month(_s3)) := _r5
+      end-if
+
+      readln(_s1, _s2, _s3, _r4, _r5)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("MTRLPLANNED")
+    writeln(strfmt("PLANT",5), " ", strfmt("MATERIAL",10), " ", strfmt("MONTH",6), " ",
+            strfmt("PLANQTY",7), " ", strfmt("PLANCOST",10), "\n", 42*"-")
+    forall (p in PLANT, m in MATERIAL, t in MONTH | MTRLPLANNED(p,m,t) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(m,10), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(MTRLPLANNED(p,m,t),7,0), " ", strfmt(MTRLPLANNEDCOST(p,m,t),10))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read material BOM data
+  procedure read_mtrlbom
+    fopen(DATA_PATH+"mtrlbom.in", F_INPUT)
+    readln(_s1, _s2, _s3, _s4, _r5)
+    while (getparam("nbread") = 5) do
+      if check_plant(_s1) and check_grade(_s2) and check_material(_s3) and check_month(_s4) then
+         MTRLBOM(_s1, _s2, _s3, get_month(_s4)) := _r5
+      end-if
+
+      readln(_s1, _s2, _s3, _s4, _r5)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("MTRLBOM")
+    writeln(strfmt("PLANT",5), " ", strfmt("GRADE",11), " ", strfmt("MATERIAL",10), " ",
+            strfmt("MONTH",6), " ", strfmt("BOM",8), "\n", 44*"-")
+    forall (p in PLANT, g in GRADE, m in MATERIAL, t in MONTH | MTRLBOM(p,g,m,t) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(g,11), " ", strfmt(m,10), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(MTRLBOM(p,g,m,t),8,3))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read inventory safety stock data
+  procedure read_safetystock
+    fopen(DATA_PATH+"safetystock.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4, _r5)
+    while (getparam("nbread") = 5) do
+      if check_supply(_s1) and check_item(_s2) and check_month(_s3) then
+         INVMIN(_s1, _s2, get_month(_s3)) := _r4
+         INVMAX(_s1, _s2, get_month(_s3)) := _r5
+      end-if
+
+      readln(_s1, _s2, _s3, _r4, _r5)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("SAFETYSTOCK")
+    writeln(strfmt("SUPPLY",6), " ", strfmt("MGRADE",6), " ", strfmt("GRADE",11), " ",
+            strfmt("ITEM",8), " ", strfmt("MONTH",6), " ",
+            strfmt("MININV",6), " ", strfmt("MAXINV",6), "\n", 55*"-")
+    forall (s in SUPPLY, i in ITEM, t in MONTH |
+    	    INVMIN(s,i,t) > ZEROVALUE or INVMAX(s,i,t) > ZEROVALUE)
+      writeln(strfmt(s,6), " ", strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), " ", strfmt(ITEM_GRADE(i),11), " ",
+              strfmt(i,8), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(INVMIN(s,i,t),6,0), " ", strfmt(INVMAX(s,i,t),6,0))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read initial inventory quantity data
+  procedure read_initinv
+    fopen(DATA_PATH+"initinv.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4, _r5)
+    while (getparam("nbread") = 5) do
+      if check_plant(_s1) and _s2="NULL" and check_item(_s3) then
+         COMMINV(_s1, _s3) := _r4
+         COMMINVCOST(_s1, _s3) := _r5
+      elif check_plant(_s1) and check_supply(_s2) and check_item(_s3) then
+         INITINV(_s1, _s2, _s3) := _r4
+         INITINVCOST(_s1, _s2, _s3) := _r5
+      end-if
+
+      readln(_s1, _s2, _s3, _r4, _r5)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("INIT INV & COMMON INV")
+    writeln(strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ", strfmt("ITEM",8), " ",
+            strfmt("INITINV",7), " ", strfmt("COST",7), "\n", 37*"-")
+    forall (p in PLANT, s in SUPPLY, i in ITEM | INITINV(p,s,i) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(s,6), " ", strfmt(i,8), " ",
+              strfmt(INITINV(p,s,i),7,2), " ", strfmt(INITINVCOST(p,s,i),7,1))
+    forall (p in PLANT, i in ITEM | COMMINV(p,i) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt("NULL",6), " ", strfmt(i,8), " ",
+              strfmt(COMMINV(p,i),7,2), " ", strfmt(COMMINVCOST(p,i),7,1))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read initial SP inventory quantity data
+  procedure read_initinvsp
+    fopen(DATA_PATH+"initinv_spec.in", F_INPUT)
+    readln(_s1, _s2, _s3, _s4, _r5, _r6)
+    while (getparam("nbread") = 6) do
+      if check_plant(_s1) and check_supply(_s2) and check_item(_s3) then
+         INITINV_SP(_s1, _s2, _s3, _s4) := _r5
+         INITINVCOST_SP(_s1, _s2, _s3, _s4) := _r6
+         SPEC_ITEMLIST += {_s3}
+      end-if
+
+      readln(_s1, _s2, _s3, _s4, _r5, _r6)
+    end-do
+    finalize(SPEC)
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("SP INIT INV")
+    writeln(strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ", strfmt("ITEM",8), " ",
+            strfmt("SPEC",7), " ", strfmt("INITINV",7), " ", strfmt("INITINV",7), "\n", 45*"-")
+    forall (p in PLANT, s in SUPPLY, i in ITEM, sp in SPEC | INITINV_SP(p,s,i,sp) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(s,6), " ", strfmt(i,8), " ",
+              strfmt(sp,7), " ", strfmt(INITINV_SP(p,s,i,sp),7,2), " ", strfmt(INITINVCOST_SP(p,s,i,sp),7,2))
+    writeln
+
+    writeln
+    writeln("SPEC : ", SPEC)
+    writeln
+    writeln
+    writeln("SPEC_ITEMLIST : ", SPEC_ITEMLIST)
+    writeln
+    end-if
+  end-procedure
+
+
+! Read transfer lead time data
+  procedure read_translt
+    fopen(DATA_PATH+"translt.in", F_INPUT)
+    readln(_s1, _s2, _i3)
+    while (getparam("nbread") = 3) do
+      if check_plant(_s1) and check_supply(_s2) then
+         TRANSLT(_s1, _s2) := _i3
+      end-if
+
+      readln(_s1, _s2, _i3)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("TRANSLT")
+    writeln(strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ", strfmt("LEADTIME",8), "\n", 21*"-")
+    forall (p in PLANT, s in SUPPLY | TRANSLT(p,s) > 0)
+      writeln(strfmt(p,5), " ", strfmt(s,6), " ", strfmt(TRANSLT(p,s),8))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read initial transfer quantity data
+  procedure read_inittrans
+    fopen(DATA_PATH+"inittrans.in", F_INPUT)
+    readln(_s1, _s2, _s3, _s4, _r5, _r6)
+    while (getparam("nbread") = 6) do
+      if check_plant(_s1) and check_supply(_s2) and check_item(_s3) and check_month(_s4) then
+         INITTRANS(_s1, _s2, _s3, get_month(_s4)) := _r5
+         INITTRANSCOST(_s1, _s2, _s3, get_month(_s4)) := _r6
+      end-if
+
+      readln(_s1, _s2, _s3, _s4, _r5, _r6)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("INITTRANS")
+    writeln(strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ", strfmt("ITEM",8), " ",
+            strfmt("MONTH",6), " ", strfmt("TRANS",5), " ", strfmt("COST",5), "\n", 40*"-")
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | INITTRANS(p,s,i,t) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt(s,6), " ", strfmt(i,8), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(INITTRANS(p,s,i,t),5,1), " ", strfmt(INITTRANSCOST(p,s,i,t),5,1))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read fixed production data
+  procedure read_fixprod
+    fopen(DATA_PATH+"fixprod.in", F_INPUT)
+    readln(_s1, _s2, _s3, _r4, _r5)
+    while (getparam("nbread") = 5) do
+      if check_line(_s1) and check_grade(_s2) and check_month(_s3) then
+         FIXQTY(_s1, _s2, get_month(_s3)) := _r4
+         FIXDAY(_s1, _s2, get_month(_s3)) := _r5
+      end-if
+
+      readln(_s1, _s2, _s3, _r4, _r5)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("FIXPROD")
+    writeln(strfmt("LINE",12), " ", strfmt("GRADE",11), " ", strfmt("MONTH",6), " ",
+              strfmt("FIXQTY",6), " ", strfmt("FIXDAY",6), "\n", 45*"-")
+    forall (l in LINE, g in GRADE, t in MONTH |
+    	    FIXQTY(l,g,t) > ZEROVALUE or FIXDAY(l,g,t) > ZEROVALUE)
+      writeln(strfmt(l,12), " ", strfmt(g,11), " ", strfmt(MONTHNAME(t),6), " ",
+              strfmt(FIXQTY(l,g,t),6,1), " ", strfmt(FIXDAY(l,g,t),6,1))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read repackagable item list data
+  procedure read_repackage
+    declarations
+      REV_COMMINVCOST: array(PLANT,ITEM) of real
+      TOT_COST, TOT_INV: real
+    end-declarations
+
+    fopen(DATA_PATH+"REPKG.in", F_INPUT)
+    readln(_s1, _s2, _s3, _s4)
+    while (getparam("nbread") = 4) do
+      if check_plant(_s1) and check_grade(_s2) and check_item(_s3) and check_item(_s4) and
+         ITEM_GRADE(_s3)=_s2 and ITEM_GRADE(_s4)=_s2 then
+         REPKG_ITEMLIST(_s1,_s3) += {_s4}
+      end-if
+
+      readln(_s1, _s2, _s3, _s4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("REPACKAGE")
+    writeln(strfmt("PLANT",5), " ", strfmt("REP_ITEM",8), " ",
+            strfmt("{REPKG_ITEM_LIST..}",19), "\n", 34*"-")
+    forall (p in PLANT, i in ITEM | getsize(REPKG_ITEMLIST(p,i)) > 0)
+      writeln(strfmt(p,5), " ", strfmt(i,8), " ", REPKG_ITEMLIST(p,i))
+    writeln
+    end-if
+
+    forall (p in PLANT, i in ITEM | COMMINV(p,i) <= ZEROVALUE and COMMINVCOST(p,i) <= ZEROVALUE) do
+      TOT_COST := 0
+      TOT_INV := 0
+      forall (i2 in ITEM | COMMINV(p,i2) > ZEROVALUE and i in REPKG_ITEMLIST(p,i2)) do
+        TOT_COST += COMMINVCOST(p,i2)*COMMINV(p,i2)
+        TOT_INV += COMMINV(p,i2)
+      end-do
+      if (TOT_INV > ZEROVALUE) then
+         REV_COMMINVCOST(p,i) := TOT_COST/TOT_INV
+      end-if
+    end-do
+
+    if DEBUG_READ then
+    writeln
+    writeln("REVISED COMMON INV (After)")
+    writeln(strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ", strfmt("ITEM",10), " ",
+            strfmt("INITINV",7), " ", strfmt("COST",7), " ", strfmt("REVCOST",7), "\n", 45*"-")
+    forall (p in PLANT, i in ITEM | COMMINV(p,i) > ZEROVALUE or COMMINVCOST(p,i) > ZEROVALUE or REV_COMMINVCOST(p,i) > ZEROVALUE)
+      writeln(strfmt(p,5), " ", strfmt("NULL",6), " ", strfmt(i,10), " ",
+              strfmt(COMMINV(p,i),7,2), " ", strfmt(COMMINVCOST(p,i),7,1), " ", strfmt(REV_COMMINVCOST(p,i),7,1))
+    writeln
+    end-if
+
+    forall (p in PLANT, i in ITEM | REV_COMMINVCOST(p,i) > ZEROVALUE and COMMINVCOST(p,i) <= ZEROVALUE)
+      COMMINVCOST(p,i) := REV_COMMINVCOST(p,i)
+  end-procedure
+
+
+! Read exchangable item list data
+  procedure read_exchange
+  	declarations
+      T_EXCH: set of string
+      T_EXCHITEM: array(T_EXCH) of set of string
+      PRIORITY: real
+  	end-declarations
+
+    fopen(DATA_PATH+"EXCHANGE.in", F_INPUT)
+    readln(_s1, _s2)
+    while (getparam("nbread") = 2) do
+      if check_item(_s2) and check_samemgrade(_s1,_s2) then
+         T_EXCHITEM(_s1) += {_s2}
+         EXCH_ALLITEMLIST += {_s2}
+      end-if
+
+      readln(_s1, _s2)
+    end-do
+    finalize(T_EXCH)
+    fclose(F_INPUT)
+
+    forall (e in T_EXCH, i in T_EXCHITEM(e))
+      EXCHITEM(i) := T_EXCHITEM(e) - {i}
+
+    PRIORITY := 100.0
+    forall (i in ITEM, i2 in EXCHITEM(i)) do
+      EXCH_PRIORITY(i,i2) := PRIORITY
+      PRIORITY += 1.0
+    end-do
+
+    if DEBUG_READ then
+    writeln
+    writeln("EXCHANGE LIST")
+    writeln(strfmt("GROUP",10), " ", strfmt("ITEM",10), "\n", 21*"-")
+    forall (e in T_EXCH)
+      writeln(strfmt(e,10), " ", T_EXCHITEM(e))
+    writeln
+
+    writeln
+    writeln("EXCHANGE ITEM")
+    writeln(strfmt("ITEM",10), " ", strfmt("ITEMLIST",10), "\n", 21*"-")
+    forall (i in ITEM | getsize(EXCHITEM(i)) > ZEROVALUE)
+      writeln(strfmt(i,10), " ", EXCHITEM(i))
+    writeln
+
+    writeln
+    writeln("EXCHANGE PRIORITY")
+    writeln(strfmt("ITEM",10), " ", strfmt("ITEM2",10), " ", strfmt("PRIORITY",10), "\n", 32*"-")
+    forall (i in ITEM, i2 in EXCHITEM(i))
+      writeln(strfmt(i,10), " ", strfmt(i2,10), " ", strfmt(EXCH_PRIORITY(i,i2),10))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read alternative plant data
+  procedure read_altplant
+    forall (a in RALT)
+      ALT_PRIORITY(a) := 10 + a
+
+    fopen(DATA_PATH+"ALT_PLANT.in", F_INPUT)
+    readln(_s1, _s2, _s3)
+    while (getparam("nbread") = 3) do
+      if check_plant(_s2) and check_item(_s3) then
+         forall (o in ORDER | ORDER_NAME(o)=_s1) do
+           ALT_CNT(o) += 1
+           ALT_PLANT(o,ALT_CNT(o)) := _s2
+           ALT_ITEM(o,ALT_CNT(o)) := _s3
+         end-do
+      end-if
+
+      readln(_s1, _s2, _s3)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("ALT_PRIORITY")
+    writeln(strfmt("ALT",10), " ", strfmt("PRIORITY",10), "\n", 21*"-")
+    forall (a in RALT)
+      writeln(strfmt(a,10), " ", strfmt(ALT_PRIORITY(a),10))
+    writeln
+
+    writeln
+    writeln("ALT_PLANT")
+    writeln(strfmt("ORDER",10), " ", strfmt("PLANT",10), " ", strfmt("ITEM",10), "\n", 32*"-")
+    forall (o in ORDER, i in 1..ALT_CNT(o))
+      writeln(strfmt(o,10), " ", strfmt(ALT_PLANT(o,i),10), " ", strfmt(ALT_ITEM(o,i),10))
+    writeln
+    end-if
+  end-procedure
+
+
+! Read alternative line data
+  procedure read_altline
+    fopen(DATA_PATH+"ALT_LINE.in", F_INPUT)
+    readln(_s1, _s2, _s3, _s4)
+    while (getparam("nbread") = 4) do
+      if check_plant(_s2) and check_line(_s3) and check_item(_s4) then
+         forall (o in ORDER | ORDER_NAME(o)=_s1) do
+           if not LINEITEM(_s3,_s4) then
+              ALT_CNT(o) += 1
+              ALT_PLANT(o,ALT_CNT(o)) := _s2
+              ALT_LINE(o,ALT_CNT(o)) := _s3
+              ALT_ITEM(o,ALT_CNT(o)) := _s4
+           end-if
+         end-do
+      end-if
+
+      readln(_s1, _s2, _s3, _s4)
+    end-do
+    fclose(F_INPUT)
+
+    if DEBUG_READ then
+    writeln
+    writeln("ALT_LINE (+ALT_PLANT)")
+    writeln(strfmt("ORDER",10), " ", strfmt("ORDERNAME",10), " ",
+            strfmt("PLANT",10), " ", strfmt("LINE",10), " ",
+            strfmt("ITEM",10), "\n", 54*"-")
+    forall (o in ORDER, i in 1..ALT_CNT(o)) do
+      writeln(strfmt(o,10), " ", strfmt(ORDER_NAME(o),10), " ",
+              strfmt(ALT_PLANT(o,i),10), " ", strfmt(ALT_LINE(o,i),10), " ",
+              strfmt(ALT_ITEM(o,i),10))
+    end-do
+    writeln
+    end-if
+  end-procedure
+
+
+! Correct line days data compare to line grade
+  procedure correct_linedays
+    declarations
+      is_feasible: boolean
+    end-declarations
+
+    forall (l in LINE, t in MONTH | SYNC_PROD = "Y" and l in {SYNC_LINE1,SYNC_LINE2}) do
+      is_feasible := false
+      forall (g in GRADE | GRADEMINDAYS(l,g) > ZEROVALUE and LINEASSIGN(l,GRADE_MGRADE(g),t) > ZEROVALUE)
+        if LINEDAYS(l,t) >= GRADEMINDAYS(l,g) then
+           is_feasible := true
+        end-if
+
+      if not is_feasible then
+         LINEDAYS(l,t) := 0
+         writeln("> LINEDAYS(", l, ",", MONTHNAME(t),
+                 ") is set to 0 because it is less than MINDAYS of LINEGRADE")
+      end-if
+    end-do
+  end-procedure
+
+
+! Read data
+  fopen(RESULT_PATH+"val_data.out", F_OUTPUT)
+  read_order
+  read_ordersp
+  read_lineitem
+  read_linedays
+  read_lineassign
+  read_linerate
+  read_linegrade
+  read_itemlife
+  read_regionratiomsl
+  read_regionratio
+  read_mtrlcost
+  read_mtrlonhand
+  read_mtrlplanned
+  read_mtrlbom
+  read_safetystock
+  read_initinv
+  read_initinvsp
+  read_translt
+  read_inittrans
+  read_fixprod
+  read_repackage
+  read_exchange
+  read_altplant
+  read_altline
+  correct_linedays
+  fclose(F_OUTPUT)
+  writeln("\n", "** ReadData finished at ", gettime, " sec")
+
+
+  declarations
+    produce: array(LINE,GRADE,MONTH) of mpvar			! Time spent to produce of grade (Days)
+    produce2: array(LINE,GRADE,MONTH) of mpvar			! Time spent to produce when FIXDAYS exists (Days)
+    ifproduce: array(LINE,GRADE,MONTH) of mpvar			! Binary variables that take 1 iff produce > 0
+    gmake: array(LINE,GRADE,MONTH) of mpvar				! Amount to make of grade (Metric Ton)
+    gmake2: array(LINE,GRADE,MONTH) of mpvar			! Amount to make when FIXDAYS exists (Metric Ton)
+    imake: array(LINE,ITEM,MONTH) of mpvar				! Amount to make of item (Metric Ton)
+
+    transfer: array(PLANT,SUPPLY,ITEM,MONTH) of mpvar			! Amount to transfer (Metric Ton)
+    transfer_sp: array(PLANT,SUPPLY,ITEM,SPEC,MONTH) of mpvar	! Amount to spec transfer (Metric Ton)
+
+    ! total inventory of plant & supply-point
+    inventory: array(PLANT,SUPPLY,ITEM,MONTH) of mpvar			! Amount of inventory (Metric Ton)
+    inventory_sp: array(PLANT,SUPPLY,ITEM,SPEC,MONTH) of mpvar	! Amount of spec inventory (Metric Ton)
+
+    ! inventory of plant, supply-point
+    inv_p: array(PLANT,ITEM,MONTH) of mpvar						! Amount of plant inventory (Metric Ton)
+    !inv_p_sp: array(PLANT,ITEM,SPEC,MONTH) of mpvar			! Amount of plant spec inventory (Metric Ton)
+    !NO inv_p_sp because inv_p is only for the production inventory not initial inventory
+    !   and SPEC is specified when transfer after production (that means inv_p includes normal and SPEC inventory both)
+    inv_s: array(PLANT,SUPPLY,ITEM,MONTH) of mpvar				! Amount of supply-point inventory (Metric Ton)
+    inv_s_sp: array(PLANT,SUPPLY,ITEM,SPEC,MONTH) of mpvar		! Amount of supply-point spec inventory (Metric Ton)
+
+    ! initinv of repackagable item = initinv_nop of same item + initinv_pkg of changed item
+    initinv_nop: dynamic array(PLANT,SUPPLY,ITEM,MONTH) of mpvar	! Amount of stayed inventory of repackagable item (Metric Ton)
+    initinv_pkg: dynamic array(PLANT,SUPPLY,ITEM,MONTH) of mpvar	! Amount of repackaged inventory of repackagable item (Metric Ton)
+    initinv_supp: dynamic array(PLANT,SUPPLY,ITEM,MONTH) of mpvar	! Amount of initial inventory of null supply item (Metric Ton)
+
+    invminunder: array(SUPPLY,ITEM,MONTH) of mpvar		! Amount of less inventory quantity than INVMIN (Metric Ton)
+    invminover: array(SUPPLY,ITEM,MONTH) of mpvar		! Amount of more inventory quantity than INVMIN (Metric Ton)
+    invmaxunder: array(SUPPLY,ITEM,MONTH) of mpvar		! Amount of less inventory quantity than INVMAX (Metric Ton)
+    invmaxover: array(SUPPLY,ITEM,MONTH) of mpvar		! Amount of more inventory quantity than INVMAX (Metric Ton)
+    invminunderg: array(SUPPLY,GRADE,MONTH) of mpvar	! Max under-inventory level to INVMIN among item (Metric Ton)
+    invminunderi: array(ITEM,MONTH) of mpvar			! Max under-inventory level to INVMIN among supply (Metric Ton)
+    invminoverg: array(SUPPLY,GRADE,MONTH) of mpvar		! Max over-inventory level to INVMIN among item (Metric Ton)
+    invminoveri: array(ITEM,MONTH) of mpvar				! Max over-inventory level to INVMIN among supply (Metric Ton)
+    invmaxoverg: array(SUPPLY,GRADE,MONTH) of mpvar		! Max over-inventory level to INVMAX among item (Metric Ton)
+    invmaxoveri: array(ITEM,MONTH) of mpvar				! Max over-inventory level to INVMAX among supply (Metric Ton)
+    sell: dynamic array(ORDER,MONTH) of mpvar					! Amount to sell of no spec order (Metric Ton)
+    exch_sell: dynamic array(ORDER,ITEM,MONTH) of mpvar			! Amount to exchange sell (Metric Ton)
+    alt_sell: dynamic array(ORDER,PLANT,ITEM,MONTH) of mpvar	! Amount to alternative sell (Metric Ton)
+    sp_sell: dynamic array(ORDER,MONTH) of mpvar				! Amount to sell of spec order (Metric Ton)
+    unmeet: array(ORDER) of mpvar								! Amount of unmeet to ORDER_MINQTY (Metric Ton)
+    meet2, unmeet2: array(ORDER) of mpvar						! Amount of unmeet to ORDER_MAXQTY (Metric Ton)
+    mtrlcost, mtrlcost2: mpvar									! Amount of material cost
+
+    OrderMinQty: array(ORDER) of linctr
+    OrderMinQtyPre: array(ORDER) of linctr
+    OrderMinQtyPost: array(ORDER) of linctr
+    OrderMaxQty: array(ORDER) of linctr
+    OrderMeetQty: array(ORDER) of linctr
+    LineItem: array(LINE,ITEM) of linctr
+    LineDays: array(LINE,MONTH) of linctr
+    LineAssign: array(LINE,MGRADE,MONTH) of linctr
+    Util1ByLine: array(LINE) of linctr
+    Util1ByMGrade: array(LINE,MGRADE) of linctr
+    Util2ByLine: array(LINE) of linctr
+    Util2ByMGrade: array(LINE,MGRADE) of linctr
+    LineRate: array(LINE,GRADE,MONTH) of linctr
+
+    GradeMinDays: array(LINE,GRADE,MONTH) of linctr
+    GradeMaxDays: array(LINE,GRADE,MONTH) of linctr
+    GradeMinDays_MAN1, GradeMinDays_MAN2: linctr
+    GradeMinDays_MAN3, GradeMinDays_MAN4: linctr
+    FixProduce: array(LINE,GRADE,MONTH) of linctr
+    GradeTime: array(LINE,GRADE) of linctr
+    ItemLife: array(LINE,ITEM) of linctr
+    ItemQty: array(ITEM) of linctr
+    !RegionRatioMSL: array(MGRADE,REGION,MONTH) of linctr
+    RegionRatio: array(MGRADE,REGION,MONTH) of linctr
+
+    MtrlCost, MtrlCost2: linctr
+    MtrlCapa: array(PLANT,MATERIAL,MONTH) of linctr
+    InitInv: array(PLANT,SUPPLY,ITEM) of linctr
+    CommInv: array(PLANT,ITEM) of linctr
+    RepkgLimit: array(PLANT,SUPPLY,ITEM,MONTH) of linctr
+    InvMin: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMinUnderG: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMinUnderI: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMinOverG: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMinOverI: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMax: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMaxOverG: array(SUPPLY,ITEM,MONTH) of linctr
+    InvMaxOverI: array(SUPPLY,ITEM,MONTH) of linctr
+    TotInventory: array(PLANT,SUPPLY,ITEM,MONTH) of linctr
+    TotInventorySP: array(PLANT,SUPPLY,ITEM,SPEC,MONTH) of linctr
+    PlantInvBalance: array(PLANT,ITEM,MONTH) of linctr
+    SuppInvBalance: array(PLANT,SUPPLY,ITEM,MONTH) of linctr
+    SuppInvBalanceSP: array(PLANT,SUPPLY,ITEM,SPEC,MONTH) of linctr
+    ItemGrade: array(LINE,GRADE,MONTH) of linctr
+
+    ZeroProd: array(LINE,GRADE,MONTH) of linctr
+    ZeroTransfer: array(PLANT,SUPPLY,ITEM) of linctr
+    FixDay: array(LINE,GRADE,MONTH) of linctr
+    FixQty: array(LINE,GRADE,MONTH) of linctr
+    SyncGrade1, SyncGrade2: array(GRADE,MONTH) of linctr
+    SyncLine1, SyncLine2: array(MONTH) of linctr
+
+    mtrlinv: array(PLANT,MATERIAL,MONTH) of real
+    mtrlinvcost: array(PLANT,MATERIAL,MONTH) of real
+    sellmtrlcost: array(ORDER,MONTH) of real
+    transmtrlcost: array(PLANT,SUPPLY,ITEM,MONTH) of real
+    itemmtrlcost: array(PLANT,SUPPLY,ITEM,MONTH) of real
+
+    DIFF: real
+  end-declarations
+
+
+  ! create dynamic sell decision variables
+  forall (o in ORDER, t in MONTH | t >= ORDER_MONTH(o) and ORDER_SP(o) = "")
+    create(sell(o,t))
+
+
+  ! create dynamic sp_sell decision variables
+  forall (o in ORDER, t in MONTH | ORDER_SP(o) <> "" and t >= ORDER_MONTH(o))
+    create(sp_sell(o,t))
+
+
+  ! create dynamic exch_sell decision variables
+  forall (o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | t >= ORDER_MONTH(o))
+    create(exch_sell(o,i,t))
+
+
+  ! create dynamic alt_sell decision variables
+  forall (o in ORDER, a in 1..ALT_CNT(o), t in MONTH | t >= ORDER_MONTH(o)) do
+    create(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t))
+    !writeln("alt_sell(", o, " ", ALT_PLANT(o,a), " ", ALT_ITEM(o,a), " ", t, ") created")
+  end-do
+
+
+  ! If selling goes under ORDER_MINQTY, then count unmeet (remove "t >= ORDER_MONTH(o)" condition)
+  forall (o in ORDER)
+    OrderMinQty(o) := sum(t in MONTH) sell(o,t) +
+                      sum(t in MONTH) sp_sell(o,t) +
+                      sum(a in 1..ALT_CNT(o), t in MONTH) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                      sum(i in EXCHITEM(ORDER_ITEM(o)), t in MONTH) exch_sell(o,i,t) +
+                      unmeet(o) >=
+                      ORDER_MINQTY(o)
+
+  ! It can not be sold in advance (removed because of dynamic creation of variables)
+  !forall (o in ORDER)
+  !  OrderMinQtyPre(o) := sum(t in MONTH | t < ORDER_MONTH(o)) sell(o,t) +
+  !                       sum(t in MONTH | t < ORDER_MONTH(o)) sp_sell(o,t) +
+  !    sum(a in 1..ALT_CNT(o), t in MONTH | t<ORDER_MONTH(o)) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) = 0
+
+
+  ! It can not be sold after required month if LATE_DELIVERY is not permitted
+  forall (o in ORDER)
+    OrderMinQtyPost(o) := sum(t in MONTH | t > ORDER_MONTH(o)+LATE_DELIVERY) sell(o,t) +
+                          sum(t in MONTH | t > ORDER_MONTH(o)+LATE_DELIVERY) sp_sell(o,t) +
+                          sum(a in 1..ALT_CNT(o), t in MONTH | t>ORDER_MONTH(o)+LATE_DELIVERY)
+                            alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                          sum(i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | t>ORDER_MONTH(o)+LATE_DELIVERY) exch_sell(o,i,t) = 0
+
+
+  ! Meet quantity
+  forall (o in ORDER)
+    OrderMeetQty(o) := meet2(o) =
+                       sum(t in MONTH) sell(o,t) +
+                       sum(t in MONTH) sp_sell(o,t) +
+                       sum(a in 1..ALT_CNT(o), t in MONTH) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                       sum(i in EXCHITEM(ORDER_ITEM(o)), t in MONTH) exch_sell(o,i,t)
+
+  ! Selling can not be over than ORDER_MAXQTY (remove "t >= ORDER_MONTH(o)" condition)
+  forall (o in ORDER)
+    OrderMaxQty(o) := meet2(o) + unmeet2(o) = ORDER_MAXQTY(o)
+  writeln(".. constraints OrderMaxQty(o) is built at ", gettime)
+
+
+  ! LINEITEM is the capable item list of line,
+  !   so if item is not registered in the line then we can not make that item in the line
+  forall (l in LINE, i in ITEM | not LINEITEM(l,i))
+    LineItem(l,i) := sum(t in MONTH) imake(l,i,t) = 0
+
+
+  ! Total produced days can not over LINEDAYS or LINECDAYS
+  !   and if FIXDAY is greater than LINEDAYS then no more produce
+  if PROD_CAPA = "Y" then
+     forall (l in LINE, t in MONTH)
+       if sum(g in GRADE) FIXDAY(l,g,t) <= LINEDAYS(l,t) then
+          LineDays(l,t) := sum(g in GRADE) produce(l,g,t) <= LINEDAYS(l,t)
+          ! weak constraints added
+          ! forall(g in GRADE) produce(l,g,t) <= LINEDAYS(l,t)
+       else
+          LineDays(l,t) := sum(g in GRADE) produce2(l,g,t) = 0
+          ! weak constraints added
+          ! forall(g in GRADE) produce2(l,g,t) = 0
+       end-if
+  else
+     forall (l in LINE, t in MONTH)
+       if sum(g in GRADE) FIXDAY(l,g,t) <= LINECDAYS(l,t) then
+          LineDays(l,t) := sum(g in GRADE) produce(l,g,t) <= LINECDAYS(l,t)
+          ! weak constraints added
+          ! forall(g in GRADE) produce(l,g,t) <= LINECDAYS(l,t)
+       else
+          LineDays(l,t) := sum(g in GRADE) produce2(l,g,t) = 0
+          ! weak constraints added
+          ! forall(g in GRADE) produce2(l,g,t) = 0
+       end-if
+  end-if
+
+
+  ! Produced days of main grade can not over LINEASSIGN
+  !   and if FIXDAY is greater than LINEASSIGN then no more produce
+  forall (l in LINE, mg in MGRADE, t in MONTH)
+    if sum(g in GRADE | GRADE_MGRADE(g)=mg) FIXDAY(l,g,t) <= LINEASSIGN(l,mg,t) then
+       LineAssign(l,mg,t) := sum(g in GRADE | GRADE_MGRADE(g) = mg) produce(l,g,t) <= LINEASSIGN(l,mg,t)
+       ! weak constraints added
+       ! forall(g in GRADE | GRADE_MGRADE(g) = mg) produce(l,g,t) <= LINEASSIGN(l,mg,t)
+    else
+       LineAssign(l,mg,t) := sum(g in GRADE | GRADE_MGRADE(g) = mg) produce2(l,g,t) = 0
+       ! weak constraints added
+       ! forall(g in GRADE | GRADE_MGRADE(g) = mg) produce2(l,g,t) = 0
+    end-if
+  writeln(".. constraints LineAssign(l,mg,t) is built at ", gettime)
+
+
+  ! Utilization of first month should be guaranteed (removed requirement cancelled)
+  !forall (l in LINE)
+  !  Util1ByLine(l) := sum(g in GRADE) produce(l,g,1) >= LINEDAYS(l,1) * OPT_UTIL_MONTH1 / 100
+
+  ! Utilization of second month should be guaranteed (removed requirement cancelled)
+  !forall (l in LINE)
+  !  Util2ByLine(l) := sum(g in GRADE) produce(l,g,2) >= LINEDAYS(l,2) * OPT_UTIL_MONTH2 / 100
+
+
+  ! LINERATE is the made-quantity when produced full-day
+  forall (l in LINE, g in GRADE, t in MONTH)
+    if FIXDAY(l,g,t) > ZEROVALUE then
+       LineRate(l,g,t) := gmake2(l,g,t) = LINERATE(l,g,t) * produce2(l,g,t)
+    else
+       LineRate(l,g,t) := gmake(l,g,t) = LINERATE(l,g,t) * produce(l,g,t)
+    end-if
+  writeln(".. constraints LineRate(l,g,t) is built at ", gettime)
+
+
+  ! Integral condition of produce, produce2 (removed requirement cancelled)
+  !forall (l in LINE, g in GRADE, t in MONTH)
+  !  if FIXDAY(l,g,t) > ZEROVALUE then
+  !     produce2(l,g,t) is_integer
+  !  else
+  !     produce(l,g,t) is_integer
+  !  end-if
+
+
+  ! Produced days can not less than GRADEMINDAYS if produced
+  !   and if FIXDAY is less than GRADEMINDAYS then do not apply this constraints
+  ! Produced days can not greater than GRADEMAXDAYS if produced
+  !   and if FIXDAY is greater than GRADEMAXDAYS then no more produce of that grade
+  forall (l in LINE, g in GRADE, t in MONTH)
+    if FIXDAY(l,g,t) <= ZEROVALUE then
+       GradeMinDays(l,g,t) := produce(l,g,t) >= GRADEMINDAYS(l,g) * ifproduce(l,g,t) - ZEROVALUE
+       GradeMaxDays(l,g,t) := produce(l,g,t) <= if(GRADEMAXDAYS(l,g)>ZEROVALUE,GRADEMAXDAYS(l,g),31) * ifproduce(l,g,t)
+(!
+    elif FIXDAY(l,g,t) <= GRADEMINDAYS(l,g) then
+       GradeMinDays(l,g,t) := produce(l,g,t) >= FIXDAY(l,g,t) * ifproduce(l,g,t)
+       GradeMaxDays(l,g,t) := produce(l,g,t) <= if(GRADEMAXDAYS(l,g)>ZEROVALUE,GRADEMAXDAYS(l,g),31) * ifproduce(l,g,t)
+    elif FIXDAY(l,g,t) <= if(GRADEMAXDAYS(l,g)>ZEROVALUE,GRADEMAXDAYS(l,g),31) then
+       GradeMinDays(l,g,t) := produce(l,g,t) >= GRADEMINDAYS(l,g) * ifproduce(l,g,t)
+       GradeMaxDays(l,g,t) := produce(l,g,t) <= if(GRADEMAXDAYS(l,g)>ZEROVALUE,GRADEMAXDAYS(l,g),31) * ifproduce(l,g,t)
+    else
+       GradeMinDays(l,g,t) := produce(l,g,t) >= GRADEMINDAYS(l,g) * ifproduce(l,g,t)
+       GradeMaxDays(l,g,t) := produce(l,g,t) <= FIXDAY(l,g,t) * ifproduce(l,g,t)
+!)
+    end-if
+  writeln(".. constraints GradeMaxDays(l,g,t) is built at ", gettime)
+
+
+  ! ifproduce = 1 if FIXDAY exists
+  forall (l in LINE, g in GRADE, t in MONTH)
+    if FIXDAY(l,g,t) > ZEROVALUE then
+       FixProduce(l,g,t) := ifproduce(l,g,t) = 1
+    end-if
+
+
+  ! Produced number can not over TIME12M in AP
+  forall (l in LINE, g in GRADE)
+    if PLANTYPE = "AP" and GRADETIME12M(l,g) > 0 then
+       GradeTime(l,g) := sum(t in MONTH) ifproduce(l,g,t) <= GRADETIME12M(l,g)
+    elif PLANTYPE = "SP" and GRADETIME6M(l,g) > 0 then
+       GradeTime(l,g) := sum(t in MONTH) ifproduce(l,g,t) <= GRADETIME6M(l,g)
+    end-if
+
+
+  ! Item can not be made after ITEMLIFE
+  forall (l in LINE, i in ITEM | ITEMLIFE(i) > 0)
+    ItemLife(l,i) := sum(t in MONTH | t > ITEMLIFE(i)) imake(l,i,t) = 0
+
+
+  ! Item can not be made if no order_maxqty
+  ! forall (i in ITEM | ITEMQTY(i) < ZEROVALUE)
+    ! ItemQty(i) := sum(l in LINE, t in MONTH) imake(l,i,t) = 0
+
+
+  ! Regional ratio can not be less than REGIONRATIOMSL
+  if REGION_CAPA = "Y" then
+     forall (mg in MGRADE, r in REGION, t in MONTH)
+       RegionRatio(mg,r,t) :=
+         sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o) = r) sell(o,t) +
+         sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o) = r) sp_sell(o,t) +
+         sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg and ORDER_REGION(o) = r)
+             alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+         sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o) = r)
+             exch_sell(o,i,t) >=
+         REGIONRATIOMSL(mg,r,t) / 100 *
+         (sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) sell(o,t) +
+          sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) sp_sell(o,t) +
+          sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg)
+              alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+          sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg)
+              exch_sell(o,i,t))
+  end-if
+  writeln(".. constraints RegionRatio(mg,r,t) is built at ", gettime)
+
+
+  ! Material usage can not over MTRLONHAND and MTRLPLANNED
+  forall (p in PLANT, m in MATERIAL, t in MONTH | t<=RM_CAPA)
+    MtrlCapa(p,m,t) := sum(l in LINE, g in GRADE, t2 in MONTH | LINE_PLANT(l) = p and t2 <= t)
+                       MTRLBOM(p,g,m,t2) * gmake (l,g,t2) <=
+                       MTRLONHAND(p,m) + sum(t2 in MONTH | t2 <= t) MTRLPLANNED(p,m,t2)
+  writeln(".. constraints MtrlCapa(p,m,t) is built at ", gettime)
+
+
+  ! Initial common(null-supply) inventory quantity can be distributed to other supply's inventory and can be repackaged
+  forall (p in PLANT, i in ITEM | COMMINV(p,i) > ZEROVALUE) do
+    if getsize(REPKG_ITEMLIST(p,i)) > 0 then
+       ! Null supply and repackagable item
+       forall (s in SUPPLY, i2 in REPKG_ITEMLIST(p,i) | i2=i) create(initinv_nop(p,s,i2,TRANSLT(p,s)+1))
+       forall (s in SUPPLY, i2 in REPKG_ITEMLIST(p,i) | i2<>i) create(initinv_pkg(p,s,i2,TRANSLT(p,s)+1))
+       CommInv(p,i) := COMMINV(p,i) =
+         sum(s in SUPPLY, i2 in REPKG_ITEMLIST(p,i)) (initinv_nop(p,s,i2,TRANSLT(p,s)+1)+initinv_pkg(p,s,i2,TRANSLT(p,s)+1))
+    else !if i not in EXCH_ALLITEMLIST then
+       ! Null supply and not repackagable item
+       forall (s in SUPPLY) create(initinv_supp(p,s,i,TRANSLT(p,s)+1))
+       CommInv(p,i) := sum(s in SUPPLY) initinv_supp(p,s,i,TRANSLT(p,s)+1) = COMMINV(p,i)
+    end-if
+  end-do
+  writeln(".. constraints CommInv(p,i) is built at ", gettime)
+
+
+  ! Repackaging quantity of null-supply & repackagable item can not over sales quantity
+(!
+  forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s)
+    RepkgLimit(p,s,i,t) := initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t) <=
+      sum(o in ORDER, t2 in MONTH | ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and ORDER_ITEM(o) = i and t2 >= t) sell(o,t2) +
+      sum(o in ORDER, a in 1..ALT_CNT(o), t2 in MONTH |
+          ALT_PLANT(o,a) = p and ORDER_SUPPLY(o) = s and ALT_ITEM(o,a) = i and t2 >= t) alt_sell(o,p,i,t2) +
+      sum(o in ORDER, i2 in EXCHITEM(ORDER_ITEM(o)), t2 in MONTH |
+          ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and i2 = i and t2 >= t) exch_sell(o,i2,t2)
+  writeln(".. constraints RepkgLimit(p,s,i,t) is built at ", gettime)
+!)
+
+
+  ! Diffenrentiated quantity of inventory quantity compare to INVMIN
+  forall (s in SUPPLY, i in ITEM, t in MONTH)
+    InvMin(s,i,t) := invminover(s,i,t) - invminunder(s,i,t) =
+                     sum(p in PLANT) inventory(p,s,i,t) +
+                     sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t) -
+                     INVMIN(s,i,t)
+
+
+  ! Max under-inventory level among item, supply
+  forall (s in SUPPLY, i in ITEM, t in MONTH) do
+    InvMinUnderG(s,i,t) := invminunderg(s,ITEM_GRADE(i),t) >= invminunder(s,i,t)
+    InvMinUnderI(s,i,t) := invminunderi(i,t) >= invminunder(s,i,t)
+
+    InvMinOverG(s,i,t) := invminoverg(s,ITEM_GRADE(i),t) >= invminover(s,i,t)
+    InvMinOverI(s,i,t) := invminoveri(i,t) >= invminover(s,i,t)
+  end-do
+
+
+  ! Inventory quantity that greater than INVMAX
+  forall (s in SUPPLY, i in ITEM, t in MONTH)
+    InvMax(s,i,t) := invmaxover(s,i,t) - invmaxunder(s,i,t) =
+      sum(p in PLANT) inventory(p,s,i,t) + sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t) - INVMAX(s,i,t)
+
+
+  ! Max over-inventory level among item, supply
+  forall (s in SUPPLY, i in ITEM, t in MONTH) do
+    InvMaxOverG(s,i,t) := invmaxoverg(s,ITEM_GRADE(i),t) >= invmaxover(s,i,t)
+    InvMaxOverI(s,i,t) := invmaxoveri(i,t) >= invmaxover(s,i,t)
+  end-do
+  writeln(".. constraints InvMaxOverG(s,i,t) is built at ", gettime)
+
+
+  ! Total inventory equations
+  forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH)
+    TotInventory(p,s,i,t) := inventory(p,s,i,t) = if(p=s,inv_p(p,i,t),0) + inv_s(p,s,i,t)
+  forall (p in PLANT, s in SUPPLY, i in SPEC_ITEMLIST, sp in SPEC, t in MONTH)
+    TotInventorySP(p,s,i,sp,t) :=  inventory_sp(p,s,i,sp,t) = inv_s_sp(p,s,i,sp,t)
+  writeln(".. constraints TotInventory(p,s,i,t) is built at ", gettime)
+
+
+  ! Plant inventory balance equations (wide off production is considered)
+  forall (p in PLANT, i in ITEM, t in MONTH)
+    PlantInvBalance(p,i,t) := inv_p(p,i,t) =
+      if(t>1,inv_p(p,i,t-1),0) +
+      sum(l in LINE | LINE_PLANT(l) = p) (1-LINEWIDEOFF(l,ITEM_GRADE(i),t)/100) * imake(l,i,t) -
+      sum(s in SUPPLY) transfer(p,s,i,t) -
+      sum(s in SUPPLY, sp in SPEC) transfer_sp(p,s,i,sp,t)
+  writeln(".. constraints PlantInvBalance(p,i,t) is built at ", gettime)
+
+
+  ! Supply-Point inventory quantity at the end of month is equal to the remaining starting inventory
+  !   of the month plus transferred quantity minus selling quantity
+  forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH)
+    SuppInvBalance(p,s,i,t) :=
+      inv_s(p,s,i,t) = if(t>1,inv_s(p,s,i,t-1),INITINV(p,s,i)) +
+      INITTRANS(p,s,i,t) + initinv_nop(p,s,i,t) + initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t) +
+      if(t>TRANSLT(p,s),transfer(p,s,i,t-TRANSLT(p,s)),0) -
+      sum(o in ORDER | ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and ORDER_ITEM(o) = i) sell(o,t) -
+      sum(o in ORDER, a in 1..ALT_CNT(o) | ALT_PLANT(o,a) = p and ORDER_SUPPLY(o) = s and ALT_ITEM(o,a) = i) alt_sell(o,p,i,t) -
+      sum(o in ORDER, i2 in EXCHITEM(ORDER_ITEM(o)) | ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and i2 = i) exch_sell(o,i2,t)
+  writeln(".. constraints SuppInvBalance(p,s,i,t) is built at ", gettime)
+
+
+  ! Supply-Point inventory balance equations for SPEC
+  forall (p in PLANT, s in SUPPLY, i in SPEC_ITEMLIST, sp in SPEC, t in MONTH)
+    SuppInvBalanceSP(p,s,i,sp,t) :=
+      inv_s_sp(p,s,i,sp,t) = if(t>1,inv_s_sp(p,s,i,sp,t-1),INITINV_SP(p,s,i,sp)) +
+      INITTRANS_SP(p,s,i,sp,t) + if(t>TRANSLT(p,s),transfer_sp(p,s,i,sp,t-TRANSLT(p,s)),0) -
+      sum(o in ORDER | ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and ORDER_ITEM(o) = i and ORDER_SP(o)=sp) sp_sell(o,t)
+  writeln(".. constraints SuppInvBalanceSP(p,s,i,sp,t) is built at ", gettime)
+
+
+  ! All produced quantity by item is same as produced quantity of the grade
+  forall (l in LINE, g in GRADE, t in MONTH)
+    ItemGrade(l,g,t) := sum(i in ITEM | ITEM_GRADE(i) = g) imake(l,i,t) = gmake(l,g,t)
+  writeln(".. constraints ItemGrade(l,g,t) is built at ", gettime)
+
+
+  ! If LINERATE is zero or not registered then it can not be produced
+  forall (l in LINE, g in GRADE, t in MONTH | LINERATE(l,g,t) < ZEROVALUE)
+    if FIXDAY(l,g,t) > ZEROVALUE then
+       ZeroProd(l,g,t) := produce2(l,g,t) = 0
+    else
+       ZeroProd(l,g,t) := produce(l,g,t) = 0
+    end-if
+  writeln(".. constraints ZeroProd(l,g,t) is built at ", gettime)
+
+
+  ! If no order and no safetystock required then do not transfer it
+  ! Considering lead time and sell later
+  !forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s)
+  !  if ((sum(o in ORDER | ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and ORDER_ITEM(o) = i) ORDER_MAXQTY(o)) < ZEROVALUE) and
+  !	   ((sum(t2 in MONTH) INVMIN(s,i,t2)) < ZEROVALUE) then
+  !     ZeroTransfer(p,s,i,t) := transfer(p,s,i,t) + sum(sp in SPEC) transfer_sp(p,s,i,sp,t) +
+  !                              initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t) = 0
+  !  end-if
+
+(! It is not valid because alt_sell can not be control with its alternative item code
+  forall (p in PLANT, s in SUPPLY, i in ITEM | p<>s and
+          sum(o in ORDER | ORDER_PLANT(o) = p and ORDER_SUPPLY(o) = s and ORDER_ITEM(o) = i) ORDER_MAXQTY(o) < ZEROVALUE and
+  	      sum(t2 in MONTH) INVMIN(s,i,t2) < ZEROVALUE)
+    ZeroTransfer(p,s,i) := sum(t in MONTH) transfer(p,s,i,t) + sum(sp in SPEC, t in MONTH) transfer_sp(p,s,i,sp,t) +
+                           sum(t in MONTH) initinv_nop(p,s,i,t) + sum(t in MONTH) initinv_pkg(p,s,i,t) +
+                           sum(t in MONTH) initinv_supp(p,s,i,t) = 0
+  writeln(".. constraints ZeroTransfer(p,s,i) is built at ", gettime)
+!)
+
+
+  ! FIXDAYS should be guaranteed to produce
+  forall (l in LINE, g in GRADE, t in MONTH)
+    if FIXDAY(l,g,t) > ZEROVALUE then
+       FixDay(l,g,t) := produce(l,g,t) = FIXDAY(l,g,t) + produce2(l,g,t)
+    else
+       FixDay(l,g,t) := produce2(l,g,t) = 0
+    end-if
+  writeln(".. constraints FixDay(l,g,t) is built at ", gettime)
+
+
+  ! FIXQTY should be guaranteed to make
+  forall (l in LINE, g in GRADE, t in MONTH)
+    if FIXDAY(l,g,t) > ZEROVALUE then
+       FixQty(l,g,t) := gmake(l,g,t) = FIXQTY(l,g,t) + gmake2(l,g,t)
+    else
+       FixQty(l,g,t) := gmake2(l,g,t) = 0
+    end-if
+
+
+  ! ifproduce is binary
+  forall (l in LINE, g in GRADE, t in MONTH)
+    ifproduce(l,g,t) is_binary
+
+
+  ! Production synchronization
+  forall (t in MONTH | SYNC_PROD = "Y") do
+    DIFF := LINEDAYS(SYNC_LINE1, t) - LINEDAYS(SYNC_LINE2, t)
+
+    ! Synchronization of line production
+    if DIFF > 0 then
+       SyncLine1(t) := sum(g in GRADE) produce(SYNC_LINE2,g,t) <= sum(g in GRADE) produce(SYNC_LINE1,g,t)
+       SyncLine2(t) := sum(g in GRADE) produce(SYNC_LINE1,g,t) <= sum(g in GRADE) produce(SYNC_LINE2,g,t) + DIFF
+    else
+       SyncLine1(t) := sum(g in GRADE) produce(SYNC_LINE1,g,t) <= sum(g in GRADE) produce(SYNC_LINE2,g,t)
+       SyncLine2(t) := sum(g in GRADE) produce(SYNC_LINE2,g,t) <= sum(g in GRADE) produce(SYNC_LINE1,g,t) - DIFF
+    end-if
+
+    ! Synchronization of each grade production
+    if DIFF > 0 then
+       forall (g in GRADE) do
+         SyncGrade1(g,t) := produce(SYNC_LINE2,g,t) <= produce(SYNC_LINE1,g,t)
+         SyncGrade2(g,t) := produce(SYNC_LINE1,g,t) <= produce(SYNC_LINE2,g,t) + DIFF
+       end-do
+    else
+       forall (g in GRADE) do
+         SyncGrade1(g,t) := produce(SYNC_LINE1,g,t) <= produce(SYNC_LINE2,g,t)
+         SyncGrade2(g,t) := produce(SYNC_LINE2,g,t) <= produce(SYNC_LINE1,g,t) - DIFF
+       end-do
+    end-if
+  end-do
+
+
+  writeln("** BuildConstraints finished at ", gettime)
+
+
+  ! For test(Test)
+
+
+  ! Write time to produce of grade (Days) result
+  procedure write_produce(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nPRODUCE result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("LINE",12), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",", strfmt("MONTH",6), ",",
+               strfmt("PRODUCE",10), "\n", 74*"-")
+    end-if
+
+    if vname <> "" then
+    forall (l in LINE, g in GRADE, t in MONTH | getsol(produce(l,g,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(LINE_PLANT(l),5), ",", strfmt(l,12), ",",
+               strfmt(GRADE_MGRADE(g),6), ",", strfmt(g,11), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(produce(l,g,t)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to make of grade (Metric Ton) result
+  procedure write_gmake(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nGMAKE result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("LINE",12), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",", strfmt("MONTH",6), ",",
+               strfmt("MAKE",10), "\n", 74*"-")
+    end-if
+
+    if vname <> "" then
+    forall (l in LINE, g in GRADE, t in MONTH | getsol(gmake(l,g,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(LINE_PLANT(l),5), ",", strfmt(l,12), ",",
+               strfmt(GRADE_MGRADE(g),6), ",", strfmt(g,11), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(gmake(l,g,t)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to make of item (Metric Ton) result
+  procedure write_imake(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\n\IMAKE result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("LINE",12), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",", strfmt("ITEM",20), ",",
+               strfmt("MONTH",6), ",", strfmt("MAKE",10), "\n", 95*"-")
+    end-if
+
+    if vname <> "" then
+    forall (l in LINE, i in ITEM, t in MONTH | getsol(imake(l,i,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(LINE_PLANT(l),5), ",", strfmt(l,12), ",",
+               strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), ",", strfmt(ITEM_GRADE(i),11), ",",
+               strfmt(ITEM_GRADE(i)+"_"+i,20), ",",
+               strfmt(MONTHNAME(t),6), ",", strfmt(getsol(imake(l,i,t)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to transfer plan (Metric Ton) result
+  procedure write_transferplan(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nTRANSFER(Plan) result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("SUPPLY",6), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",",
+               strfmt("ITEM",20), ",", strfmt("MONTH",6), ",",
+               strfmt("TRANS",10), "\n", 89*"-")
+    end-if
+
+    if vname <> "" then
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | t>TRANSLT(p,s) and
+    	    getsol(transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(p,5), ",", strfmt(s,6), ",",
+               strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), ",", strfmt(ITEM_GRADE(i),11), ",",
+               strfmt(ITEM_GRADE(i)+"_"+i,20), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(transfer(p,s,i,t-TRANSLT(p,s)) +
+                             sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to transfer Init (InitTransfer) result
+  procedure write_transferinit(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nTRANSFER(Init) result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("SUPPLY",6), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",",
+               strfmt("ITEM",20), ",", strfmt("MONTH",6), ",",
+               strfmt("TRANS",10), "\n", 89*"-")
+    end-if
+
+    if vname <> "" then
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH |
+       getsol(INITTRANS(p,s,i,t)+initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(p,5), ",", strfmt(s,6), ",",
+               strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), ",", strfmt(ITEM_GRADE(i),11), ",",
+               strfmt(ITEM_GRADE(i)+"_"+i,20), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(INITTRANS(p,s,i,t)+
+                             sum(sp in SPEC) INITTRANS_SP(p,s,i,sp,t)+
+                             initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to transfer total (InitTransfer + PlanTransfer) result
+  procedure write_transfertotal(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nTRANSFER(Total) result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("SUPPLY",6), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",",
+               strfmt("ITEM",20), ",", strfmt("MONTH",6), ",",
+               strfmt("TRANS",10), "\n", 89*"-")
+    end-if
+
+    if vname <> "" then
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH)
+       if t<=TRANSLT(p,s) and INITTRANS(p,s,i,t) + sum(sp in SPEC) INITTRANS_SP(p,s,i,sp,t) +
+          getsol(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)) > ZEROVALUE then
+          writeln(strfmt(vname,18), ",", strfmt(p,5), ",", strfmt(s,6), ",",
+                  strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), ",", strfmt(ITEM_GRADE(i),11), ",",
+                  strfmt(ITEM_GRADE(i)+"_"+i,20), ",", strfmt(MONTHNAME(t),6), ",",
+                  strfmt(getsol(INITTRANS(p,s,i,t)+
+                                sum(sp in SPEC) INITTRANS_SP(p,s,i,sp,t)+
+                                initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)),10,4))
+       elif t>TRANSLT(p,s) and INITTRANS(p,s,i,t) + sum(sp in SPEC) INITTRANS_SP(p,s,i,sp,t) +
+          getsol(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)+
+                 transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))) > ZEROVALUE then
+          writeln(strfmt(vname,18), ",", strfmt(p,5), ",", strfmt(s,6), ",",
+                  strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), ",", strfmt(ITEM_GRADE(i),11), ",",
+                  strfmt(ITEM_GRADE(i)+"_"+i,20), ",", strfmt(MONTHNAME(t),6), ",",
+                  strfmt(INITTRANS(p,s,i,t)+sum(sp in SPEC) INITTRANS_SP(p,s,i,sp,t)+
+                         getsol(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)+
+                                transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))),10,4))
+       end-if
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount of inventory (Metric Ton) result
+  procedure write_inventory(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nINVENTORY result")
+       writeln(strfmt("VERSION",18), ",", strfmt("PLANT",5), ",", strfmt("SUPPLY",6), ",",
+               strfmt("MGRADE",6), ",", strfmt("GRADE",11), ",",
+               strfmt("ITEM",20), ",", strfmt("MONTH",6), ",",
+               strfmt("INVENTORY",10), "\n", 89*"-")
+    end-if
+
+    if vname <> "" then
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH |
+       getsol(inventory(p,s,i,t)+sum(sp in SPEC) inventory_sp(p,s,i,sp,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(p,5), ",", strfmt(s,6), ",",
+               strfmt(GRADE_MGRADE(ITEM_GRADE(i)),6), ",", strfmt(ITEM_GRADE(i),11), ",",
+               strfmt(ITEM_GRADE(i)+"_"+i,20), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(inventory(p,s,i,t)+sum(sp in SPEC) inventory_sp(p,s,i,sp,t)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to sell (Metric Ton) result
+  procedure write_sell(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nSELL result")
+       writeln(strfmt("VERSION",18), ",", strfmt("ORDER",5), ",", strfmt("MONTH",6), ",",
+               strfmt("SELL",10), "\n", 42*"-")
+    end-if
+
+    if vname <> "" then
+    forall (o in ORDER, t in MONTH |
+       getsol(sell(o,t)+sp_sell(o,t)+sum(i in EXCHITEM(ORDER_ITEM(o))) exch_sell(o,i,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(ORDER_NAME(o),5), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(sell(o,t)+sp_sell(o,t)+sum(i in EXCHITEM(ORDER_ITEM(o))) exch_sell(o,i,t)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to alt_sell of plant (Metric Ton) result
+  procedure write_sell_plant(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nALT_SELL of plant result")
+       writeln(strfmt("VERSION",18), ",", strfmt("ORDER",5), ",", strfmt("PLANT",10), ",",
+               strfmt("ITEM",10), ",", strfmt("MONTH",6), ",",
+               strfmt("SELL",10), ",", strfmt("MTRLCOST",10), "\n", 64*"-")
+    end-if
+
+    if vname <> "" then
+    forall (o in ORDER, a in 1..ALT_CNT(o), t in MONTH |
+       getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE and ALT_LINE(o,a) = "")
+       writeln(strfmt(vname,18), ",", strfmt(ORDER_NAME(o),5), ",", strfmt(ALT_PLANT(o,a),10), ",",
+               strfmt(ALT_ITEM(o,a),10), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),10,4), ",", strfmt(sellmtrlcost(o,t),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to alt_sell of line (Metric Ton) result
+  procedure write_sell_line(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nALT_SELL of line result")
+       writeln(strfmt("VERSION",18), ",", strfmt("ORDER",5), ",", strfmt("PLANT",10), ",",
+               strfmt("ITEM",10), ",", strfmt("MONTH",6), ",",
+               strfmt("SELL",10), ",", strfmt("MTRLCOST",10), "\n", 64*"-")
+    end-if
+
+    if vname <> "" then
+    forall (o in ORDER, a in 1..ALT_CNT(o), t in MONTH |
+       getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE and ALT_LINE(o,a) <> "")
+       writeln(strfmt(vname,18), ",", strfmt(ORDER_NAME(o),5), ",", strfmt(ALT_PLANT(o,a),10), ",",
+               strfmt(ALT_LINE(o,a),10), ",", strfmt(ALT_ITEM(o,a),10), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),10,4), ",", strfmt(sellmtrlcost(o,t),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount to exch_sell (Metric Ton) result
+  procedure write_sell_exchange(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nEXCH_SELL result")
+       writeln(strfmt("VERSION",18), ",", strfmt("ORDER",5), ",",
+               strfmt("ITEM",10), ",", strfmt("MONTH",6), ",",
+               strfmt("SELL",10), ",", strfmt("MTRLCOST",10), "\n", 53*"-")
+    end-if
+
+    if vname <> "" then
+    forall (o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | getsol(exch_sell(o,i,t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(ORDER_NAME(o),5), ",",
+               strfmt(i,10), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(exch_sell(o,i,t)),10,4), ",", strfmt(sellmtrlcost(o,t),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write material cost of sell (Metric Ton) result
+  procedure write_sellmtrlcost(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nSELL and MTRL COST result")
+       writeln(strfmt("VERSION",18), ",", strfmt("ORDER",5), ",", strfmt("MONTH",6), ",",
+               strfmt("SELL",10), ",", strfmt("MTRLCOST",10), "\n", 42*"-")
+    end-if
+
+    if vname <> "" then
+    forall (o in ORDER, t in MONTH |
+       getsol(sell(o,t)+sp_sell(o,t)+sum(i in EXCHITEM(ORDER_ITEM(o))) exch_sell(o,i,t)+
+              sum(a in 1..ALT_CNT(o)) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(ORDER_NAME(o),5), ",", strfmt(MONTHNAME(t),6), ",",
+               strfmt(getsol(sell(o,t)+sp_sell(o,t)+sum(i in EXCHITEM(ORDER_ITEM(o))) exch_sell(o,i,t)+
+                             sum(a in 1..ALT_CNT(o)) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),10,4), ",",
+               strfmt(sellmtrlcost(o,t),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Write amount of unmeet (Metric Ton) result
+  procedure write_unmeet(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    else
+       writeln("\n\nUNMEET result")
+       writeln(strfmt("VERSION",18), ",", strfmt("ORDER",5), ",",
+               strfmt("UNMEET",10), "\n", 35*"-")
+    end-if
+
+    if vname <> "" then
+    forall (o in ORDER | getsol(unmeet(o)) > ZEROVALUE)
+       writeln(strfmt(vname,18), ",", strfmt(ORDER_NAME(o),5), ",",
+               strfmt(getsol(unmeet(o)),10,4))
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate order & unmeet
+  procedure validate_order(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nORDER MEET/UNMEET validation")
+       write(strfmt("VERSION",18), " ", strfmt("ID",5), " ", strfmt("ORDER",8), " ",
+             strfmt("REGION",7), " ", strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ",
+             strfmt("GRADE",11), " ", strfmt("ITEM",8), " ", strfmt("SP",2), " ",
+             strfmt("PRIOTY",7), " ", strfmt("PRIOTY2",7), " ",
+             strfmt("MINQTY",6), " ", strfmt("MAXQTY",6), " ",
+             strfmt("MONTH",6), " ", strfmt("M.COST",6), " ", "V | ",
+             strfmt("MEET",7), " ", strfmt("UNMEET",7), " ", strfmt("UNMET2",7), " |")
+       forall (t in MONTH) write(" ", strfmt(MONTHNAME(t),7))
+       writeln("\n", (149+getsize(MONTH)*8)*"-")
+    forall (o in ORDER) do
+       write(strfmt(vname,18), " ", strfmt(o,5), " ", strfmt(ORDER_NAME(o),8), " ",
+             strfmt(ORDER_REGION(o),7), " ", strfmt(ORDER_PLANT(o),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+             strfmt(ITEM_GRADE(ORDER_ITEM(o)),11), " ", strfmt(ORDER_ITEM(o),8), " ", strfmt(ORDER_SP(o),2), " ",
+             strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+             strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+             strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ",
+             if(getsol(unmeet(o))>ZEROVALUE, "- | ", "  | "),
+             strfmt(getsol(sum(t in MONTH) (sell(o,t))),7,3), " ", strfmt(getsol(unmeet(o)),7,3),
+             " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+       forall (t in MONTH)
+          if getsol(sell(o,t)) > ZEROVALUE then
+             write(" ", strfmt(getsol(sell(o,t)),7,3))
+          else
+             write(strfmt("",8))
+          end-if
+
+       ! sp_sell result
+       if getsol(sum(t in MONTH) sp_sell(o,t)) > ZEROVALUE then
+          writeln
+          write(strfmt(vname,18), " ", strfmt("SPEC",5), " ", strfmt(ORDER_NAME(o),8), " ",
+                strfmt(ORDER_REGION(o),7), " ", strfmt(ORDER_PLANT(o),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+                strfmt(ITEM_GRADE(ORDER_ITEM(o)),11), " ", strfmt(ORDER_ITEM(o),8), " ", strfmt(ORDER_SP(o),2), " ",
+                strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+                strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+                strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ",
+                "  | ",
+                strfmt(getsol(sum(t in MONTH) sp_sell(o,t)),7,3), " ", strfmt(getsol(unmeet(o)),7,3),
+                " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+          forall (t in MONTH)
+             if getsol(sp_sell(o,t)) > ZEROVALUE then
+                write(" ", strfmt(getsol(sp_sell(o,t)),7,3))
+             else
+                write(strfmt("",8))
+             end-if
+       end-if
+
+       ! alt_sell result
+       forall (a in 1..ALT_CNT(o) | getsol(sum(t in MONTH) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE) do
+         writeln
+         write(strfmt(vname,18), " ", strfmt("ALT",5), " ", strfmt(ORDER_NAME(o),8), " ",
+               strfmt(ORDER_REGION(o),7), " ", strfmt(ALT_PLANT(o,a),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+               strfmt(ITEM_GRADE(ALT_ITEM(o,a)),11), " ", strfmt(ALT_ITEM(o,a),8), " ", strfmt("",2), " ",
+               strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+               strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+               strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ", "  | ",
+               strfmt(getsol(sum(t in MONTH) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),7,3),
+               " ", strfmt(getsol(unmeet(o)),7,3), " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+         forall (t in MONTH)
+            if getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE then
+               write(" ", strfmt(getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),7,3))
+            else
+               write(strfmt("",8))
+            end-if
+       end-do
+
+       ! exch_sell result
+       forall (i in EXCHITEM(ORDER_ITEM(o)) | getsol(sum(t in MONTH) exch_sell(o,i,t)) > ZEROVALUE) do
+         writeln
+         write(strfmt(vname,18), " ", strfmt("EXCH",5), " ", strfmt(ORDER_NAME(o),8), " ",
+               strfmt(ORDER_REGION(o),7), " ", strfmt(ORDER_PLANT(o),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+               strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", strfmt("",2), " ",
+               strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+               strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+               strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ", "  | ",
+               strfmt(getsol(sum(t in MONTH) exch_sell(o,i,t)),7,3), " ", strfmt(getsol(unmeet(o)),7,3),
+               " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+         forall (t in MONTH)
+            if getsol(exch_sell(o,i,t)) > ZEROVALUE then
+               write(" ", strfmt(getsol(exch_sell(o,i,t)),7,3))
+            else
+               write(strfmt("",8))
+            end-if
+       end-do
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate order & unmeet
+  procedure validate_order_1(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nORDER MEET/UNMEET validation")
+       write(strfmt("VERSION",18), " ", strfmt("ID",5), " ", strfmt("ORDER",8), " ",
+             strfmt("REGION",7), " ", strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ",
+             strfmt("GRADE",11), " ", strfmt("ITEM",8), " ", strfmt("SP",2), " ",
+             strfmt("PRIOTY",7), " ", strfmt("PRIOTY2",7), " ",
+             strfmt("MINQTY",6), " ", strfmt("MAXQTY",6), " ",
+             strfmt("MONTH",6), " ", strfmt("M.COST",6), " ", "V | ",
+             strfmt("MEET",7), " ", strfmt("UNMEET",7), " ", strfmt("UNMET2",7), " |")
+       forall (t in MONTH) write(" ", strfmt(MONTHNAME(t),7))
+       writeln("\n", (149+getsize(MONTH)*8)*"-")
+    forall (o in ORDER | ORDER_MONTH(o) = 1) do
+       write(strfmt("vname",18), " ", strfmt(o,5), " ", strfmt(ORDER_NAME(o),8), " ",
+             strfmt(ORDER_REGION(o),7), " ", strfmt(ORDER_PLANT(o),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+             strfmt(ITEM_GRADE(ORDER_ITEM(o)),11), " ", strfmt(ORDER_ITEM(o),8), " ", strfmt(ORDER_SP(o),2), " ",
+             strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+             strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+             strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ",
+             if(getsol(unmeet(o))>ZEROVALUE, "- | ", "  | "),
+             strfmt(getsol(sum(t in MONTH) (sell(o,t))),7,3), " ", strfmt(getsol(unmeet(o)),7,3),
+             " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+       forall (t in MONTH)
+          if getsol(sell(o,t)) > ZEROVALUE then
+             write(" ", strfmt(getsol(sell(o,t)),7,3))
+          else
+             write(strfmt("",8))
+          end-if
+
+       ! sp_sell result
+       if getsol(sum(t in MONTH) sp_sell(o,t)) > ZEROVALUE then
+          writeln
+          write(strfmt("vname",18), " ", strfmt("SPEC",5), " ", strfmt(ORDER_NAME(o),8), " ",
+                strfmt(ORDER_REGION(o),7), " ", strfmt(ORDER_PLANT(o),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+                strfmt(ITEM_GRADE(ORDER_ITEM(o)),11), " ", strfmt(ORDER_ITEM(o),8), " ", strfmt(ORDER_SP(o),2), " ",
+                strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+                strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+                strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ",
+                "  | ",
+                strfmt(getsol(sum(t in MONTH) sp_sell(o,t)),7,3), " ", strfmt(getsol(unmeet(o)),7,3),
+                " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+          forall (t in MONTH)
+             if getsol(sp_sell(o,t)) > ZEROVALUE then
+                write(" ", strfmt(getsol(sp_sell(o,t)),7,3))
+             else
+                write(strfmt("",8))
+             end-if
+       end-if
+
+       ! alt_sell result
+       forall (a in 1..ALT_CNT(o) | getsol(sum(t in MONTH) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE) do
+         writeln
+         write(strfmt("vname",18), " ", strfmt("ALT",5), " ", strfmt(ORDER_NAME(o),8), " ",
+               strfmt(ORDER_REGION(o),7), " ", strfmt(ALT_PLANT(o,a),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+               strfmt(ITEM_GRADE(ALT_ITEM(o,a)),11), " ", strfmt(ALT_ITEM(o,a),8), " ", strfmt("",2), " ",
+               strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+               strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+               strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ", "  | ",
+               strfmt(getsol(sum(t in MONTH) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),7,3),
+               " ", strfmt(getsol(unmeet(o)),7,3), " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+         forall (t in MONTH)
+            if getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE then
+               write(" ", strfmt(getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)),7,3))
+            else
+               write(strfmt("",8))
+            end-if
+       end-do
+
+       ! exch_sell result
+       forall (i in EXCHITEM(ORDER_ITEM(o)) | getsol(sum(t in MONTH) exch_sell(o,i,t)) > ZEROVALUE) do
+         writeln
+         write(strfmt("vname",18), " ", strfmt("EXCH",5), " ", strfmt(ORDER_NAME(o),8), " ",
+               strfmt(ORDER_REGION(o),7), " ", strfmt(ORDER_PLANT(o),5), " ", strfmt(ORDER_SUPPLY(o),6), " ",
+               strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", strfmt("",2), " ",
+               strfmt(ORDER_PRIORITY(o),7,1), " ", strfmt(ORDER_PRIORITY2(o),7,1), " ",
+               strfmt(ORDER_MINQTY(o),6,1), " ", strfmt(ORDER_MAXQTY(o),6,1), " ",
+               strfmt(MONTHNAME(ORDER_MONTH(o)),6), " ", strfmt(sellmtrlcost(o,ORDER_MONTH(o)),6,1), " ", "  | ",
+               strfmt(getsol(sum(t in MONTH) exch_sell(o,i,t)),7,3), " ", strfmt(getsol(unmeet(o)),7,3),
+               " ", strfmt(getsol(unmeet2(o)),7,3), " |")
+         forall (t in MONTH)
+            if getsol(exch_sell(o,i,t)) > ZEROVALUE then
+               write(" ", strfmt(getsol(exch_sell(o,i,t)),7,3))
+            else
+               write(strfmt("",8))
+            end-if
+       end-do
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate line-produce
+  procedure validate_lineproduce(fname:string, vname:string)
+    declarations
+       IS_OVER: boolean
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nLINE PRODUCTION validation")
+       write(33*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),9))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("LINE",12), " V")
+       forall (t in MONTH) write(" | AVAI USED")
+       writeln("\n", (33+getsize(MONTH)*12)*"-")
+    forall (l in LINE) do
+       write(strfmt(vname,18), " ", strfmt(l,12))
+       IS_OVER := false
+       forall (t in MONTH)
+         if getsol(sum(g in GRADE) produce(l,g,t)) > LINEDAYS(l,t) + ZEROVALUE then
+            IS_OVER := true
+         end-if
+       if IS_OVER then
+       	  write(" +")
+       else
+       	  write("  ")
+       end-if
+       forall (t in MONTH)
+         write(" | ", strfmt(LINEDAYS(l,t),4,1), " ",
+               strfmt(getsol(sum(g in GRADE) produce(l,g,t)),4,1))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate mgrade-produce
+  procedure validate_mgradeproduce(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nMGRADE PRODUCTION validation")
+       write(38*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),9))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("LINE",12), " ", strfmt("MGRADE",6))
+       forall (t in MONTH) write(" | ASSN PROD")
+       writeln("\n", (38+getsize(MONTH)*12)*"-")
+    forall (l in LINE, mg in MGRADE) do
+       write(strfmt(vname,18), " ", strfmt(l,12), " ", strfmt(mg,6))
+       forall (t in MONTH)
+         write(" | ", strfmt(LINEASSIGN(l,mg,t),4,1),
+               " ", strfmt(getsol(sum(g in GRADE | GRADE_MGRADE(g) = mg) produce(l,g,t)),4,1))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate grade-produce
+  procedure validate_gradeproduce(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("GRADE PRODUCTION validation")
+       write(51*" ")
+       forall (t in MONTH) write(" | ", strfmt(substr(MONTHNAME(t),3,6),12))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("LINE",12), " ", strfmt("GRADE",11), " ",
+             strfmt("MIN",3), " ", strfmt("MAX",3))
+       forall (t in MONTH) write(" | IF PROD MAKE")
+       writeln("\n", (51+getsize(MONTH)*15)*"-")
+    forall (l in LINE, g in GRADE | getsol(sum(t in MONTH) produce(l,g,t)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(l,12), " ", strfmt(g,11), " ",
+             strfmt(GRADEMINDAYS(l,g),3), " ", strfmt(GRADEMAXDAYS(l,g),3))
+       forall (t in MONTH)
+         if getsol(produce(l,g,t)) > ZEROVALUE then
+            write(" | ", strfmt(if(getsol(ifproduce(l,g,t))<ZEROVALUE,0,1),2), " ",
+              strfmt(getsol(produce(l,g,t)),4,1), " ", strfmt(getsol(gmake(l,g,t)),4,0))
+         else
+            write(" | ", strfmt(if(getsol(ifproduce(l,g,t))<ZEROVALUE,0,1),2), " ", strfmt("",4), " ", strfmt("",4))
+         end-if
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate inventory
+  procedure validate_inventory(fname:string, vname:string)
+    declarations
+       IS_UNDER, IS_OVER: boolean
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("INVENTORY validation")
+       write(48*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),20))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6), " ", strfmt("GRADE",11), " ",
+             strfmt("ITEM",8), " V")
+       forall (t in MONTH)
+         write(" | ", strfmt("MIN",6), " ", strfmt("MAX",6), " ", strfmt("INV",6))
+       writeln("\n", (48+getsize(MONTH)*23)*"-")
+    forall (s in SUPPLY, i in ITEM |
+            getsol(sum(p in PLANT, t in MONTH) inventory(p,s,i,t) +
+                   sum(p in PLANT, sp in SPEC, t in MONTH) inventory_sp(p,s,i,sp,t)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(s,6), " ", strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8))
+       IS_UNDER := false
+       IS_OVER := false
+       forall (t in MONTH) do
+         if getsol(sum(p in PLANT) inventory(p,s,i,t) + sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t)) <
+            INVMIN(s,i,t) - ZEROVALUE then
+            IS_UNDER := true
+         end-if
+         if getsol(sum(p in PLANT) inventory(p,s,i,t) + sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t)) >
+            INVMAX(s,i,t) + ZEROVALUE then
+            IS_OVER := true
+         end-if
+       end-do
+       if IS_OVER then
+       	  write(" +")
+       elif IS_UNDER then
+       	  write(" -")
+       else
+       	  write("  ")
+       end-if
+       forall (t in MONTH)
+         write(" | ", strfmt(INVMIN(s,i,t),6,0), " ", strfmt(INVMAX(s,i,t),6,0),
+               " ", strfmt(getsol(sum(p in PLANT) inventory(p,s,i,t) +
+                                  sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t)),6,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate inventory by grade
+  procedure validate_inv_g(fname:string, vname:string)
+    declarations
+       UNDER: real
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("INVENTORY by grade validation")
+       write(37*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),19))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6), " ", strfmt("GRADE",11))
+       forall (t in MONTH)
+         write(" | ", strfmt("MIN",4), " ", strfmt("MAX",4), " ", strfmt("INV",4), " ", strfmt("UND",4))
+       writeln("\n", (37+getsize(MONTH)*22)*"-")
+    forall (s in SUPPLY, g in GRADE |
+            getsol(sum(p in PLANT, i in ITEM, t in MONTH | ITEM_GRADE(i)=g) inventory(p,s,i,t) +
+                   sum(p in PLANT, i in ITEM, sp in SPEC, t in MONTH | ITEM_GRADE(i)=g) inventory_sp(p,s,i,sp,t)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(s,6), " ", strfmt(g,11))
+       forall (t in MONTH) do
+         UNDER := sum(i in ITEM | ITEM_GRADE(i)=g) INVMIN(s,i,t) -
+                  getsol(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) inventory(p,s,i,t) +
+                         sum(p in PLANT, i in ITEM, sp in SPEC | ITEM_GRADE(i)=g) inventory_sp(p,s,i,sp,t))
+         write(" | ", strfmt(sum(i in ITEM | ITEM_GRADE(i)=g) INVMIN(s,i,t),4,0),
+               " ", strfmt(sum(i in ITEM | ITEM_GRADE(i)=g) INVMAX(s,i,t),4,0),
+               " ", strfmt(getsol(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) inventory(p,s,i,t) +
+                                  sum(p in PLANT, i in ITEM, sp in SPEC | ITEM_GRADE(i)=g) inventory_sp(p,s,i,sp,t)),4,0),
+               " ", if(UNDER>0,strfmt(UNDER,4,0),strfmt("",4)))
+       end-do
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate inventory by main-grade
+  procedure validate_inv_mg(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("INVENTORY by main-grade validation")
+       write(37*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),20))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6), " ", strfmt("MGRADE",11))
+       forall (t in MONTH)
+         write(" | ", strfmt("MIN",6), " ", strfmt("MAX",6), " ", strfmt("INV",6))
+       writeln("\n", (37+getsize(MONTH)*23)*"-")
+    forall (s in SUPPLY, mg in MGRADE) do
+       write(strfmt(vname,18), " ", strfmt(s,6), " ", strfmt(mg,11))
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(i in ITEM | GRADE_MGRADE(ITEM_GRADE(i))=mg) INVMIN(s,i,t),6,0),
+               " ", strfmt(sum(i in ITEM | GRADE_MGRADE(ITEM_GRADE(i))=mg) INVMAX(s,i,t),6,0),
+               " ", strfmt(getsol(sum(p in PLANT, i in ITEM | GRADE_MGRADE(ITEM_GRADE(i))=mg) inventory(p,s,i,t) +
+                                  sum(p in PLANT, i in ITEM, sp in SPEC | GRADE_MGRADE(ITEM_GRADE(i))=mg) inventory_sp(p,s,i,sp,t)),6,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate supply-point inventory
+  procedure validate_suppinv(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("SUPPLY-POINT INVENTORY validation")
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("PLANT",6), " ", strfmt("SUPPLY",6), " ",
+             strfmt("GRADE",11), " ", strfmt("ITEM",8), " ", strfmt("SP",2))
+       forall (t in MONTH)
+         write(" | ", strfmt(MONTHNAME(t),6))
+       writeln("\n", (56+getsize(MONTH)*9)*"-")
+    forall (p in PLANT, i in ITEM) do
+       if (getsol(sum(t in MONTH) inv_p(p,i,t)) > ZEROVALUE) then
+          write(strfmt(vname,18), " ", strfmt(p,6), " ", strfmt("-",6), " ",
+                strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", strfmt("-",2))
+          forall (t in MONTH)
+             write(" | ", strfmt(getsol(inv_p(p,i,t)),6,0))
+          writeln
+       end-if
+       forall (s in SUPPLY | getsol(sum(t in MONTH) inv_s(p,s,i,t) + sum(sp in SPEC, t in MONTH) inv_s_sp(p,s,i,sp,t)) > ZEROVALUE) do
+          if getsol(sum(t in MONTH) inv_s(p,s,i,t)) > ZEROVALUE then
+             write(strfmt(vname,18), " ", strfmt(p,6), " ", strfmt(s,6), " ",
+                   strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", strfmt("-",2))
+             forall (t in MONTH)
+                write(" | ", strfmt(getsol(inv_s(p,s,i,t)),6,0))
+             writeln
+          end-if
+          if getsol(sum(sp in SPEC, t in MONTH) inv_s_sp(p,s,i,sp,t)) > ZEROVALUE then
+             write(strfmt(vname,18), " ", strfmt(p,6), " ", strfmt(s,6), " ",
+                   strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", strfmt("SP",2))
+             forall (t in MONTH)
+                write(" | ", strfmt(getsol(sum(sp in SPEC) inv_s_sp(p,s,i,sp,t)),6,0))
+             writeln
+          end-if
+       end-do
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate inventory grade level
+  procedure validate_invglevel(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("INVENTORY grade level validation")
+       write(37*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),13))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6), " ", strfmt("GRADE",11))
+       forall (t in MONTH)
+         write(" | ", strfmt("UNDERG",6), " ", strfmt("OVERG",6))
+       writeln("\n", (37+getsize(MONTH)*16)*"-")
+    forall (s in SUPPLY, g in GRADE |
+            getsol(sum(t in MONTH) invminunderg(s,g,t)+sum(t in MONTH) invmaxoverg(s,g,t)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(s,6), " ", strfmt(g,11))
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(invminunderg(s,g,t)),6,0), " ", strfmt(getsol(invmaxoverg(s,g,t)),6,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate inventory item level
+  procedure validate_invilevel(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("INVENTORY item level validation")
+       write(27*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),13))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("ITEM",8))
+       forall (t in MONTH)
+         write(" | ", strfmt("UNDERI",6), " ", strfmt("OVERI",6))
+       writeln("\n", (27+getsize(MONTH)*16)*"-")
+    forall (i in ITEM |
+            getsol(sum(t in MONTH) invminunderi(i,t)+sum(t in MONTH) invmaxoveri(i,t)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(i,8))
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(invminunderi(i,t)),6,0), " ", strfmt(getsol(invmaxoveri(i,t)),6,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate initial inventory
+  procedure validate_initinventory(fname:string, vname:string)
+    declarations
+       IS_HEADER: boolean
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("Initial inventory validation")
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ",
+             strfmt("GRADE",11), " ", strfmt("ITEM",8), " ", strfmt("INITINV",8), " ",
+             strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ",
+             strfmt("GRADE",11), " ", strfmt("ITEM",8), " ",
+             strfmt("MONTH",6), " ",  strfmt("INITINV",8))
+       writeln("\n", 111*"-")
+    writeln("INITINV (No INITINV_SPEC)")
+    forall (p in PLANT, s in SUPPLY, i in ITEM | INITINV(p,s,i) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt(s,6), " ", strfmt(ITEM_GRADE(i),11),
+             " ", strfmt(i,8), " ", strfmt(INITINV(p,s,i),8,2))
+       IS_HEADER := true
+       forall (p2 in PLANT, s2 in SUPPLY, i2 in ITEM |
+       	       p2=p and s2=s and i2=i and INITINV(p2,s2,i2) > ZEROVALUE) do
+         if not IS_HEADER then write(61*" "); end-if
+         writeln(" ", strfmt(p2,5), " ", strfmt(s2,6), " ", strfmt(ITEM_GRADE(i2),11),
+                 " ", strfmt(i2,8), " ", strfmt("NULL",6), " ", strfmt(INITINV(p2,s2,i2),8,2))
+         IS_HEADER := false
+       end-do
+    end-do
+    writeln("initinv_nop (null supply of repackagable, original = nop + pkg)")
+    forall (p in PLANT, i in ITEM | COMMINV(p,i) > ZEROVALUE and getsize(REPKG_ITEMLIST(p,i)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt("NULL",6), " ", strfmt(ITEM_GRADE(i),11),
+             " ", strfmt(i,8), " ", strfmt(COMMINV(p,i),8,2))
+       IS_HEADER := true
+       forall (p2 in PLANT, s2 in SUPPLY, i2 in ITEM, t in MONTH |
+       	       p2=p and i2 in REPKG_ITEMLIST(p,i)+{i} and getsol(initinv_nop(p2,s2,i2,t)) > ZEROVALUE) do
+         if not IS_HEADER then write(61*" "); end-if
+         writeln(" ", strfmt(p2,5), " ", strfmt(s2,6), " ", strfmt(ITEM_GRADE(i2),11),
+                 " ", strfmt(i2,8), " ", strfmt(t,6),
+                 " ", strfmt(getsol(initinv_nop(p2,s2,i2,t)),8,2))
+         IS_HEADER := false
+       end-do
+       if IS_HEADER then writeln; end-if
+    end-do
+    writeln("initinv_pkg (null supply of repackagable, original = nop + pkg)")
+    forall (p in PLANT, i in ITEM | COMMINV(p,i) > ZEROVALUE and getsize(REPKG_ITEMLIST(p,i)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt("NULL",6), " ", strfmt(ITEM_GRADE(i),11),
+             " ", strfmt(i,8), " ", strfmt(COMMINV(p,i),8,2))
+       IS_HEADER := true
+       forall (p2 in PLANT, s2 in SUPPLY, i2 in ITEM, t in MONTH |
+       	       p2=p and i2 in REPKG_ITEMLIST(p,i)+{i} and getsol(initinv_pkg(p2,s2,i2,t)) > ZEROVALUE) do
+         if not IS_HEADER then write(61*" "); end-if
+         writeln(" ", strfmt(p2,5), " ", strfmt(s2,6), " ", strfmt(ITEM_GRADE(i2),11),
+                 " ", strfmt(i2,8), " ", strfmt(t,6),
+                 " ", strfmt(getsol(initinv_pkg(p2,s2,i2,t)),8,2))
+         IS_HEADER := false
+       end-do
+       if IS_HEADER then writeln; end-if
+    end-do
+    writeln("initinv_supp (null supply of not-repackagable)")
+    forall (p in PLANT, i in ITEM | COMMINV(p,i) > ZEROVALUE and getsize(REPKG_ITEMLIST(p,i)) <= ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt("NULL",6), " ", strfmt(ITEM_GRADE(i),11),
+             " ", strfmt(i,8), " ", strfmt(COMMINV(p,i),8,2))
+       IS_HEADER := true
+       forall (p2 in PLANT, s2 in SUPPLY, i2 in ITEM, t in MONTH | p2=p and i2 in REPKG_ITEMLIST(p,i)+{i} and
+       	      (getsol(initinv_supp(p2,s2,i2,t)) > ZEROVALUE or (i2=i and t=TRANSLT(p,s2)+1))) do
+         if not IS_HEADER then write(61*" "); end-if
+         writeln(" ", strfmt(p2,5), " ", strfmt(s2,6), " ", strfmt(ITEM_GRADE(i2),11),
+                 " ", strfmt(i2,8), " ", strfmt(t,6),
+                 " ", strfmt(getsol(initinv_supp(p2,s2,i2,t)),8,2))
+         IS_HEADER := false
+       end-do
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate material
+  procedure validate_material(fname:string, vname:string)
+    declarations
+       IS_OVER: boolean
+       ACC_CAPA, ACC_USE: array(MONTH) of real
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("Accumulative MATERIAL validation")
+       write(37*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),17))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("PLANT",5), " ", strfmt("MATERIAL",10), " V")
+       forall (t in MONTH) write(" | ", strfmt("ACC.CAPA",8), " ", strfmt("ACC.USED",8))
+       writeln("\n", (37+getsize(MONTH)*20)*"-")
+    forall (p in PLANT, m in MATERIAL) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt(m,10))
+       IS_OVER := false
+       forall (t in MONTH) do
+         ACC_CAPA(t) := MTRLONHAND(p,m) + sum(t2 in MONTH | t2 <= t) MTRLPLANNED(p,m,t2)
+         ACC_USE(t) := getsol(sum(l in LINE, g in GRADE, t2 in MONTH | LINE_PLANT(l) = p and t2 <= t)
+                       MTRLBOM(p,g,m,t2) * gmake (l,g,t2))
+         if ACC_USE(t) > ACC_CAPA(t) + ZEROVALUE then
+            IS_OVER := true
+         end-if
+       end-do
+       if IS_OVER then
+       	  write(" +")
+       else
+       	  write("  ")
+       end-if
+       forall (t in MONTH)
+         write(" | ", strfmt(ACC_CAPA(t),8,0), " ", strfmt(ACC_USE(t),8,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate region ratio
+  procedure validate_regionratio(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("Region Ratio validation")
+       writeln("O_MIN    : summation MIN order quantity of main-grade, region, month")
+       writeln("O_MAX    : summation MAX order quantity of main-grade, region, month")
+       writeln("sell(t)  : optimized sell quantity of main-grade, region, month")
+       writeln("MGtot(t) : summation sell quantity of main-grade, month")
+       writeln("planed(%): planned regional ratio")
+       writeln("tarMSL(%): target regional ratio of MSL (P-1)")
+       writeln("target(%): target regional ratio (P-2,3,4)")
+       write(34*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),44))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("MGRADE",6), " ", strfmt("REGION",8))
+       forall (t in MONTH) write(" | O_MIN O_MAX  sell MGtot planed tarMSL target")
+       writeln("\n", (34+getsize(MONTH)*47)*"-")
+    forall (mg in MGRADE, r in REGION) do
+       write(strfmt(vname,18), " ", strfmt(mg,6), " ", strfmt(r,8))
+       forall (t in MONTH)
+         write(" | ", " ",
+               strfmt(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                          ORDER_REGION(o)=r and ORDER_MONTH(o)=t) ORDER_MINQTY(o),5,0), " ",
+               strfmt(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                          ORDER_REGION(o)=r and ORDER_MONTH(o)=t) ORDER_MAXQTY(o),5,0),
+               strfmt(getsol(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                             ORDER_REGION(o)=r) (sell(o,t)+sp_sell(o,t)) +
+                             sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg and
+                             ORDER_REGION(o)=r) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                             sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                             ORDER_REGION(o)=r) exch_sell(o,i,t)),5,0), " ", 
+               strfmt(getsol(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) (sell(o,t)+sp_sell(o,t)) +
+                             sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg)
+                                 alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                             sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                                 ORDER_REGION(o)=r) exch_sell(o,i,t)),5,0), " ", 
+               strfmt(if(getsol(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) (sell(o,t)+sp_sell(o,t)) +
+                                sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg)
+                                    alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                                sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                                    ORDER_REGION(o)=r) exch_sell(o,i,t))<ZEROVALUE,0,
+                         getsol(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o)=r) (sell(o,t)+sp_sell(o,t)) +
+                                sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg and
+                                    ORDER_REGION(o)=r) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                                sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                                    ORDER_REGION(o)=r) exch_sell(o,i,t))/
+                         getsol(sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) (sell(o,t)+sp_sell(o,t)) +
+                                sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg)
+                                    alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                                sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and
+                                    ORDER_REGION(o)=r) exch_sell(o,i,t))*100),6,2), " ",
+               strfmt(REGIONRATIOMSL(mg,r,t),6,2), " ", strfmt(REGIONRATIO(mg,r,t),6,2))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate PSI
+  procedure validate_PSI(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nItem PSI validation")
+       write(52*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),9))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6), " ", strfmt("GRADE",11), " ",
+             strfmt("ITEM",8), " ", " TYPE")
+       forall (t in MONTH) write(" | ", strfmt("QTY",9))
+       writeln("\n", (52+getsize(MONTH)*12)*"-")
+    forall (s in SUPPLY, i in ITEM | sum(p in PLANT, t in MONTH) (if(t>TRANSLT(p,s),getsol(transfer(p,s,i,t-TRANSLT(p,s))+
+            sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))),0)+
+            getsol(INITTRANS(p,s,i,t)+initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t))) +
+            getsol(sum(o in ORDER, t in MONTH | ORDER_SUPPLY(o)=s and ORDER_ITEM(o)=i) (sell(o,t)+sp_sell(o,t)) +
+            sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_SUPPLY(o)=s and ALT_ITEM(o,a)=i) alt_sell(o,ALT_PLANT(o,a),i,t) +
+            sum(o in ORDER, i2 in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_SUPPLY(o)=s and i2=i) exch_sell(o,i2,t)) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(s,6), " ", strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", " INIT")
+       forall (t in MONTH)
+         write(" | ", strfmt(if(t>1,getsol(sum(p in PLANT) inventory(p,s,i,t-1) + sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t-1)),
+                                    getsol(sum(p in PLANT) INITINV(p,s,i) + sum(p in PLANT, sp in SPEC) INITINV_SP(p,s,i,sp))),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "TRANS")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT) if(t>TRANSLT(p,s),getsol(transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC)
+                                                                       transfer_sp(p,s,i,sp,t-TRANSLT(p,s))),0),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "T_INI")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT) INITTRANS(p,s,i,t),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "T_NOP")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT) getsol(initinv_nop(p,s,i,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "T_PKG")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT) getsol(initinv_pkg(p,s,i,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "T_SUP")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT) getsol(initinv_supp(p,s,i,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "MN/MX")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(o in ORDER | ORDER_SUPPLY(o)=s and ORDER_ITEM(o)=i and ORDER_MONTH(o)=t) ORDER_MINQTY(o),4,0), "/",
+                      strfmt(sum(o in ORDER | ORDER_SUPPLY(o)=s and ORDER_ITEM(o)=i and ORDER_MONTH(o)=t) ORDER_MAXQTY(o),4,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", " SELL")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(sum(o in ORDER | ORDER_SUPPLY(o)=s and ORDER_ITEM(o)=i) (sell(o,t)+sp_sell(o,t)) +
+                                    sum(o in ORDER, a in 1..ALT_CNT(o) | ORDER_SUPPLY(o)=s and ALT_ITEM(o,a)=i) alt_sell(o,ALT_PLANT(o,a),i,t) +
+                                    sum(o in ORDER, i2 in EXCHITEM(ORDER_ITEM(o)) | ORDER_SUPPLY(o)=s and i2=i) exch_sell(o,i2,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", " LAST")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(sum(p in PLANT) inventory(p,s,i,t) + sum(p in PLANT, sp in SPEC) inventory_sp(p,s,i,sp,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "STOCK")
+       forall (t in MONTH)
+         write(" | ", strfmt(INVMIN(s,i,t),4,0), "/", strfmt(INVMAX(s,i,t),4,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate PSI by grade
+  procedure validate_PSI2(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nGrade PSI validation (excluded alt/exchange sell)")
+       write(43*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),9))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6), " ", strfmt("GRADE",11), " ", " TYPE")
+       forall (t in MONTH) write(" | ", strfmt("QTY",9))
+       writeln("\n", (43+getsize(MONTH)*12)*"-")
+    forall (s in SUPPLY, g in GRADE) do
+       write(strfmt(vname,18), " ", strfmt(s,6), " ", strfmt(g,11), " ", " INIT")
+       forall (t in MONTH)
+         write(" | ", strfmt(if(t>1,getsol(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) inventory(p,s,i,t-1) + sum(p in PLANT, sp in SPEC, i in ITEM | ITEM_GRADE(i)=g) inventory_sp(p,s,i,sp,t-1)),
+                                    getsol(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) INITINV(p,s,i) + sum(p in PLANT, sp in SPEC, i in ITEM | ITEM_GRADE(i)=g) INITINV_SP(p,s,i,sp))),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "TRANS")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) if(t>TRANSLT(p,s),getsol(transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC)
+                                                                       transfer_sp(p,s,i,sp,t-TRANSLT(p,s))),0),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "T_INI")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) INITTRANS(p,s,i,t),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "T_NOP")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) getsol(initinv_nop(p,s,i,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "T_PKG")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) getsol(initinv_pkg(p,s,i,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "T_SUP")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) getsol(initinv_supp(p,s,i,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "MN/MX")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(o in ORDER | ORDER_SUPPLY(o)=s and ITEM_GRADE(ORDER_ITEM(o))=g and ORDER_MONTH(o)=t) ORDER_MINQTY(o),4,0), "/",
+                      strfmt(sum(o in ORDER | ORDER_SUPPLY(o)=s and ITEM_GRADE(ORDER_ITEM(o))=g and ORDER_MONTH(o)=t) ORDER_MAXQTY(o),4,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", " SELL")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(sum(o in ORDER | ORDER_SUPPLY(o)=s and ITEM_GRADE(ORDER_ITEM(o))=g) (sell(o,t)+sp_sell(o,t))),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", " LAST")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(sum(p in PLANT, i in ITEM | ITEM_GRADE(i)=g) inventory(p,s,i,t) + sum(p in PLANT, sp in SPEC, i in ITEM | ITEM_GRADE(i)=g) inventory_sp(p,s,i,sp,t)),9,0))
+       writeln
+       write(strfmt("",18), " ", strfmt("",6), " ", strfmt("",11), " ", "STOCK")
+       forall (t in MONTH)
+         write(" | ", strfmt(sum(i in ITEM | ITEM_GRADE(i)=g) INVMIN(s,i,t),4,0), "/", strfmt(sum(i in ITEM | ITEM_GRADE(i)=g) INVMAX(s,i,t),4,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Postprocessing procedure to calculate material cost
+  procedure postproc_mtrlcost(fname:string, vname:string)
+    declarations
+      mtrl_tobuy: real
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    forall (p in PLANT, m in MATERIAL, t in MONTH) do
+       mtrlinv(p,m,t) := 0
+       mtrlinvcost(p,m,t) := 0
+    end-do
+
+    forall (p in PLANT, m in MATERIAL, t in MONTH) do
+       mtrlinv(p,m,t) := if(t>1,mtrlinv(p,m,t-1),MTRLONHAND(p,m)) + MTRLPLANNED(p,m,t) -
+                         getsol(sum(l in LINE, g in GRADE | LINE_PLANT(l) = p) MTRLBOM(p,g,m,t)*gmake (l,g,t))
+       if mtrlinv(p,m,t) < 0 then
+          mtrl_tobuy := -mtrlinv(p,m,t)
+          mtrlinv(p,m,t) := 0
+       else
+          mtrl_tobuy := 0
+       end-if
+
+       if t=1 then
+          mtrlinvcost(p,m,t) :=
+            if(MTRLONHAND(p,m) + MTRLPLANNED(p,m,t) + mtrl_tobuy < ZEROVALUE, MTRLCOST(p,m,t),
+            (MTRLONHANDCOST(p,m)*MTRLONHAND(p,m) + MTRLPLANNEDCOST(p,m,t)*MTRLPLANNED(p,m,t) + MTRLCOST(p,m,t)*mtrl_tobuy) /
+            (MTRLONHAND(p,m) + MTRLPLANNED(p,m,t) + mtrl_tobuy))
+       elif t>1 then
+          mtrlinvcost(p,m,t) :=
+            if(mtrlinv(p,m,t-1) + MTRLPLANNED(p,m,t) + mtrl_tobuy < ZEROVALUE, MTRLCOST(p,m,t),
+            (mtrlinvcost(p,m,t-1)*mtrlinv(p,m,t-1) + MTRLPLANNEDCOST(p,m,t)*MTRLPLANNED(p,m,t) + MTRLCOST(p,m,t)*mtrl_tobuy) /
+            (mtrlinv(p,m,t-1) + MTRLPLANNED(p,m,t) + mtrl_tobuy))
+       end-if
+    end-do
+
+    if vname <> "" then
+       writeln("\n\nMaterial cost & PSI validation")
+       write(40*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),15))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("PLANT",5), " ", strfmt("MATERIAL",10), " ", "TYPE")
+       forall (t in MONTH) write(" | ", strfmt("QTY",7), " ", strfmt("U.COST",7))
+       writeln("\n", (40+getsize(MONTH)*18)*"-")
+    forall (p in PLANT, m in MATERIAL) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt(m,10), " ", "INIT")
+       forall (t in MONTH)
+         write(" | ", strfmt(if(t>1,mtrlinv(p,m,t-1),MTRLONHAND(p,m)),7,0),
+               " ", strfmt(if(t>1,mtrlinvcost(p,m,t-1),MTRLONHANDCOST(p,m)),7))
+       writeln
+       write(strfmt("",18), " ", strfmt("",5), " ", strfmt("",10), " ", " ADD")
+       forall (t in MONTH)
+         write(" | ", strfmt(MTRLPLANNED(p,m,t),7,0),
+               " ", strfmt(MTRLPLANNEDCOST(p,m,t),7))
+       writeln
+       write(strfmt("",18), " ", strfmt("",5), " ", strfmt("",10), " ", "USED")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(sum(l in LINE, g in GRADE | LINE_PLANT(l) = p) MTRLBOM(p,g,m,t)*gmake (l,g,t)),7,0),
+               " ", strfmt(mtrlinvcost(p,m,t),7))
+       writeln
+       write(strfmt("",18), " ", strfmt("",5), " ", strfmt("",10), " ", "LAST")
+       forall (t in MONTH)
+         write(" | ", strfmt(mtrlinv(p,m,t),7,0),
+               " ", strfmt(mtrlinvcost(p,m,t),7))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Postprocessing procedure to calculate sell material cost
+  procedure postproc_sellmtrlcost(fname:string, vname:string)
+    forall (o in ORDER, t in MONTH)  sellmtrlcost(o,t) := 0
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH)  transmtrlcost(p,s,i,t) := 0
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH)  itemmtrlcost(p,s,i,t) := 0
+
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH)
+       transmtrlcost(p,s,i,t) := sum(m in MATERIAL) MTRLBOM(p,ITEM_GRADE(i),m,t)*mtrlinvcost(p,m,t)
+
+    forall (p in PLANT, s in SUPPLY, i in ITEM, t in MONTH) do
+       if t=1 and t<=TRANSLT(p,s) then
+          itemmtrlcost(p,s,i,t) :=
+            if(getsol(INITINV(p,s,i) + sum(sp in SPEC) INITINV_SP(p,s,i,sp) + INITTRANS(p,s,i,t) +
+               initinv_nop(p,s,i,t) + initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t))<ZEROVALUE, 0,
+            getsol(INITINVCOST(p,s,i)*INITINV(p,s,i) + sum(sp in SPEC) INITINVCOST_SP(p,s,i,sp)*INITINV_SP(p,s,i,sp) +
+                   INITTRANSCOST(p,s,i,t)*INITTRANS(p,s,i,t) +
+                   COMMINVCOST(p,i)*(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t))) /
+            getsol(INITINV(p,s,i) + sum(sp in SPEC) INITINV_SP(p,s,i,sp) + INITTRANS(p,s,i,t) + initinv_nop(p,s,i,t) +
+                   initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t)))
+       elif t=1 and t>TRANSLT(p,s) then
+          itemmtrlcost(p,s,i,t) :=
+            if(getsol(INITINV(p,s,i) + sum(sp in SPEC) INITINV_SP(p,s,i,sp) + transfer(p,s,i,t-TRANSLT(p,s)) +
+               sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s)) + INITTRANS(p,s,i,t) + initinv_nop(p,s,i,t) +
+                   initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t))<ZEROVALUE, 0,
+            getsol(INITINVCOST(p,s,i)*INITINV(p,s,i) + sum(sp in SPEC) INITINVCOST_SP(p,s,i,sp)*INITINV_SP(p,s,i,sp) +
+                   transmtrlcost(p,s,i,t-TRANSLT(p,s))*(transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))) +
+                   INITTRANSCOST(p,s,i,t)*INITTRANS(p,s,i,t) +
+                   COMMINVCOST(p,i)*(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t))) /
+            getsol(INITINV(p,s,i) + sum(sp in SPEC) INITINV_SP(p,s,i,sp) + transfer(p,s,i,t-TRANSLT(p,s)) +
+                   sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s)) +
+                   INITTRANS(p,s,i,t) + initinv_nop(p,s,i,t) + initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t)))
+       elif t>1 and t<=TRANSLT(p,s) then
+          itemmtrlcost(p,s,i,t) :=
+            if(getsol(inventory(p,s,i,t-1) + sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1) + INITTRANS(p,s,i,t) +
+               initinv_nop(p,s,i,t) + initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t))<ZEROVALUE, 0,
+            getsol(itemmtrlcost(p,s,i,t-1)*(inventory(p,s,i,t-1)+sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1)) +
+                   INITTRANSCOST(p,s,i,t)*INITTRANS(p,s,i,t) +
+                   COMMINVCOST(p,i)*(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t))) /
+            getsol(inventory(p,s,i,t-1) + sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1) + INITTRANS(p,s,i,t) +
+                   initinv_nop(p,s,i,t) + initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t)))
+       elif t>1 and t>TRANSLT(p,s) then
+          itemmtrlcost(p,s,i,t) :=
+            if(getsol(inventory(p,s,i,t-1) + sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1) + transfer(p,s,i,t-TRANSLT(p,s)) +
+               sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s)) + INITTRANS(p,s,i,t) + initinv_nop(p,s,i,t) +
+               initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t))<ZEROVALUE, 0,
+               getsol(itemmtrlcost(p,s,i,t-1)*(inventory(p,s,i,t-1)+sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1)) +
+                      transmtrlcost(p,s,i,t-TRANSLT(p,s))*(transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))) +
+                      INITTRANSCOST(p,s,i,t)*INITTRANS(p,s,i,t) +
+                      COMMINVCOST(p,i)*(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t))) /
+               getsol(inventory(p,s,i,t-1) + sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1) + transfer(p,s,i,t-TRANSLT(p,s)) +
+                      sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s)) + INITTRANS(p,s,i,t) +
+                      initinv_nop(p,s,i,t) + initinv_pkg(p,s,i,t) + initinv_supp(p,s,i,t)))
+       end-if
+    end-do
+
+    ! basic cost for weighted average
+    forall (o in ORDER, t in MONTH)
+       sellmtrlcost(o,t) := itemmtrlcost(ORDER_PLANT(o),ORDER_SUPPLY(o),ORDER_ITEM(o),t) * getsol(sell(o,t)+sp_sell(o,t))
+
+    ! added cost for weighted average
+    forall (o in ORDER, a in 1..ALT_CNT(o), t in MONTH | getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)) > ZEROVALUE)
+       sellmtrlcost(o,t) += itemmtrlcost(ALT_PLANT(o,a),ORDER_SUPPLY(o),ALT_ITEM(o,a),t) *
+                            getsol(alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t))
+    forall (o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | getsol(exch_sell(o,i,t)) > ZEROVALUE)
+       sellmtrlcost(o,t) += itemmtrlcost(ORDER_PLANT(o),ORDER_SUPPLY(o),i,t) * getsol(exch_sell(o,i,t))
+
+    ! weighted average cost
+    forall (o in ORDER, t in MONTH |
+       getsol(sell(o,t) + sp_sell(o,t) + sum(a in 1..ALT_CNT(o)) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+              sum(i in EXCHITEM(ORDER_ITEM(o))) exch_sell(o,i,t)) > ZEROVALUE)
+       sellmtrlcost(o,t) := sellmtrlcost(o,t) /
+                            getsol(sell(o,t) + sp_sell(o,t) + sum(a in 1..ALT_CNT(o)) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                            sum(i in EXCHITEM(ORDER_ITEM(o))) exch_sell(o,i,t))
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln("\n\nItem material cost & PSI validation")
+       write(58*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),15))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("PLANT",5), " ", strfmt("SUPPLY",6), " ",
+             strfmt("GRADE",11), " ",  strfmt("ITEM",8), " ", " TYPE")
+       forall (t in MONTH) write(" | ", strfmt("QTY",7), " ", strfmt("U.COST",7))
+       writeln("\n", (58+getsize(MONTH)*18)*"-")
+    forall (p in PLANT, s in SUPPLY, i in ITEM |
+       getsol((sum(t in MONTH) inventory(p,s,i,t))+(sum(sp in SPEC, t in MONTH) inventory_sp(p,s,i,sp,t))+
+              (sum(o in ORDER | ORDER_PLANT(o)=p and ORDER_SUPPLY(o)=s and ORDER_ITEM(o)=i) ORDER_MAXQTY(o))) > ZEROVALUE) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt(s,6), " ",
+             strfmt(ITEM_GRADE(i),11), " ", strfmt(i,8), " ", " INIT")
+       forall (t in MONTH)
+         write(" | ", strfmt(if(t>1,getsol(inventory(p,s,i,t-1)+sum(sp in SPEC) inventory_sp(p,s,i,sp,t-1)),
+                                    INITINV(p,s,i)+sum(sp in SPEC) INITINV_SP(p,s,i,sp)),7,0),
+               " ", strfmt(if(t>1,getsol(itemmtrlcost(p,s,i,t-1)),
+                                  if((INITINV(p,s,i)+sum(sp in SPEC) INITINV_SP(p,s,i,sp))<ZEROVALUE,0,
+                                     (INITINVCOST(p,s,i)*INITINV(p,s,i)+
+                                      sum(sp in SPEC) INITINVCOST_SP(p,s,i,sp)*INITINV_SP(p,s,i,sp))/(INITINV(p,s,i)+
+                                      sum(sp in SPEC) INITINV_SP(p,s,i,sp)))),7))
+       writeln
+       write(strfmt("",18), " ", strfmt("",5), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", "TRANS")
+       forall (t in MONTH)
+         write(" | ", strfmt(if(t>TRANSLT(p,s),getsol(transfer(p,s,i,t-TRANSLT(p,s))+sum(sp in SPEC) transfer_sp(p,s,i,sp,t-TRANSLT(p,s))),0)+
+                             getsol(INITTRANS(p,s,i,t)+initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)),7,0),
+               " ", strfmt(if(t>TRANSLT(p,s),transmtrlcost(p,s,i,t-TRANSLT(p,s)),
+                              if(getsol(INITTRANS(p,s,i,t)+initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t))<ZEROVALUE,0,
+                                 getsol(INITTRANSCOST(p,s,i,t)*INITTRANS(p,s,i,t)+COMMINVCOST(p,i)*(initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)))/
+                                 getsol(INITTRANS(p,s,i,t)+initinv_nop(p,s,i,t)+initinv_pkg(p,s,i,t)+initinv_supp(p,s,i,t)))),7))
+       writeln
+       write(strfmt("",18), " ", strfmt("",5), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", " SELL")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(sum(o in ORDER | ORDER_PLANT(o)=p and ORDER_SUPPLY(o)=s and ORDER_ITEM(o)=i) (sell(o,t)+sp_sell(o,t)) +
+                                    sum(o in ORDER, a in 1..ALT_CNT(o) | ALT_PLANT(o,a)=p and ORDER_SUPPLY(o)=s and ALT_ITEM(o,a)=i) alt_sell(o,p,i,t) +
+                                    sum(o in ORDER, i2 in EXCHITEM(ORDER_ITEM(o)) | ORDER_PLANT(o)=p and ORDER_SUPPLY(o)=s and i2=i) exch_sell(o,i2,t)),7,0),
+               " ", strfmt(itemmtrlcost(p,s,i,t),7))
+       writeln
+       write(strfmt("",18), " ", strfmt("",5), " ", strfmt("",6), " ", strfmt("",11), " ", strfmt("",8), " ", " LAST")
+       forall (t in MONTH)
+         write(" | ", strfmt(getsol(inventory(p,s,i,t)+sum(sp in SPEC) inventory_sp(p,s,i,sp,t)),7,0),
+               " ", strfmt(itemmtrlcost(p,s,i,t),7))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate material inventory cost
+  procedure validate_mtrlinvcost(fname:string, vname:string)
+    declarations
+       IS_OVER: boolean
+       ACC_CAPA, ACC_USE: array(MONTH) of real
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("Material Inventory Cost validation")
+       write(35*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),8))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("PLANT",5), " ", strfmt("MATERIAL",10))
+       forall (t in MONTH) write(" | ", strfmt("COST",8))
+       writeln("\n", (35+getsize(MONTH)*11)*"-")
+    forall (p in PLANT, m in MATERIAL) do
+       write(strfmt(vname,18), " ", strfmt(p,5), " ", strfmt(m,10))
+       forall (t in MONTH)
+         write(" | ", strfmt(mtrlinvcost(p,m,t),8,0))
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate TLUX transfer
+  procedure validate_TLUXtransfer(fname:string, vname:string)
+    declarations
+       INV_QTY: real
+    end-declarations
+
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("TLUX transfer validation")
+       write(25*" ")
+       forall (t in MONTH) write(" | ", strfmt(MONTHNAME(t),8))
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("SUPPLY",6))
+       forall (t in MONTH) write(" | ", strfmt("INV",8))
+       writeln("\n", (25+getsize(MONTH)*11)*"-")
+    forall (s in SUPPLY) do
+       write(strfmt(vname,18), " ", strfmt(s,6))
+       forall (t in MONTH) do
+         INV_QTY := getsol(sum(p in PLANT, i in ITEM) inventory(p,s,i,t)+
+                           sum(p in PLANT, i in ITEM, sp in SPEC) inventory_sp(p,s,i,sp,t))
+         write(" | ", strfmt(INV_QTY,8,0))
+       end-do
+       writeln
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Validate GRADEMINDAYS, GRADEMAXDAYS
+  procedure validate_grademinmax(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("GRADEMINDAYS, GRADEMAXDAYS validation")
+       writeln
+       write(strfmt("VERSION",18), " ", strfmt("LINE",10), " ", strfmt("GRADE",10), " ",
+             strfmt("MONTH",10), " ", strfmt("MIN/MAX",10), " ", strfmt("DAYS",10), " ",
+             strfmt("should_be",10), " ", strfmt("produce",10), " ", strfmt("ifproduce",10), " ",
+             strfmt("FIXDAYS",10))
+       writeln("\n", 117*"-")
+    forall (l in LINE, g in GRADE, t in MONTH) do
+       if getsol(produce(l,g,t)) + ZEROVALUE < GRADEMINDAYS(l,g) * getsol(ifproduce(l,g,t)) then
+          write(strfmt(vname,18), " ", strfmt(l,10), " ", strfmt(g,10), " ",
+                strfmt(t,10), " ", strfmt("MIN",10), " ", strfmt(GRADEMINDAYS(l,g),10,7), " ",
+                strfmt("<=",10), " ", strfmt(getsol(produce(l,g,t)),10,7), " ", strfmt(getsol(ifproduce(l,g,t)),10,7), " ",
+                strfmt(FIXDAY(l,g,t),10,7))
+          writeln
+       end-if
+
+       if getsol(produce(l,g,t)) - ZEROVALUE > if(GRADEMAXDAYS(l,g)>ZEROVALUE,GRADEMAXDAYS(l,g),31) * getsol(ifproduce(l,g,t)) then
+          write(strfmt(vname,18), " ", strfmt(l,10), " ", strfmt(g,10), " ",
+                strfmt(t,10), " ", strfmt("MAX",10), " ", strfmt(GRADEMAXDAYS(l,g),10,7), " ",
+                strfmt(">=",10), " ", strfmt(getsol(produce(l,g,t)),10,7), " ", strfmt(getsol(ifproduce(l,g,t)),10,7), " ",
+                strfmt(FIXDAY(l,g,t),10,7))
+          writeln
+       end-if
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  ! Make FIXPROD
+  procedure make_fixprod(fname:string, vname:string)
+    if fname <> "" then
+       if vname = "" then
+          fopen(RESULT_PATH+fname, F_OUTPUT)
+       else
+          fopen(RESULT_PATH+fname, F_OUTPUT+F_APPEND)
+       end-if
+    end-if
+
+    if vname <> "" then
+       writeln
+       writeln
+       writeln("Make FIXPROD.IN for validation")
+       writeln
+       write(strfmt("LINE",10), " ", strfmt("GRADE",20), " ", strfmt("MONTH",10), " ",
+             strfmt("GMAKE",10), " ", strfmt("PRODUCE",10))
+       writeln("\n", 64*"-")
+    forall (l in LINE, g in GRADE, t in MONTH) do
+       if getsol(produce(l,g,t)) > ZEROVALUE then
+          write(l, "\t", g, "\t", MONTHNAME(t), "\t",
+                getsol(gmake(l,g,t)), "\t",
+                getsol(produce(l,g,t)))
+          writeln
+       end-if
+    end-do
+    end-if
+
+    if fname <> "" then
+       fclose(F_OUTPUT)
+    end-if
+  end-procedure
+
+
+  declarations
+     SCENARIO = 1..6
+     SUM_TITLE: array(SCENARIO) of string
+     SUM_ON: array(SCENARIO) of boolean
+     SUM_OPTION: array(SCENARIO) of string
+     SUM_TIME: array(SCENARIO) of real
+     SUM_STATE: array(SCENARIO) of integer
+     SUM_SVCLEVEL: array(SCENARIO) of real
+     SUM_INVLEVEL: array(SCENARIO) of real
+     SUM_INVLEVEL2: array(SCENARIO) of real
+     SUM_SPREAD: array(SCENARIO) of real
+     SUM_MARGIN: array(SCENARIO) of real
+     SUM_ONTIME: array(SCENARIO) of real
+     SUM_SELL, SUM_PURESELL: array(SCENARIO) of real
+     SUM_PRODUCE: array(SCENARIO) of real
+     SUM_MAKE, SUM_PROD, SUM_ALT, SUM_EXCH, SUPP_INV, TLUX_INV, SUM_TRANS, TLUX_TRANS: array(SCENARIO) of real
+
+     totUnmeet, totUndInv, totOverInv, totSpread, totMargin: mpvar
+     totOntime, totSell, totMake, totProd, totInv, TLUXInv, SuppInv, totAlt, totExch, totTransfer: mpvar
+     repkgtransfer, supplytransfer, TLUXtransfer: mpvar
+     solUnmeet, solUndInv, solThird: real
+     UnmeetCtr, UndInvCtr, Und3rdCtr: linctr
+
+     solMeet: array(ORDER) of real
+     MeetCtr: array(ORDER) of linctr
+
+     solInv: array(SUPPLY,ITEM,MONTH) of real
+     InvCtr: array(SUPPLY,ITEM,MONTH) of linctr
+  end-declarations
+
+
+! Optimize service level
+  SUM_ON(1) := true
+  SUM_OPTION(1) := "Y"
+  SUM_TITLE(1) := "MAX_SVCLEVEL"
+
+
+! Optimize inventory level
+  SUM_ON(2) := true
+  SUM_OPTION(2) := "Y"
+  SUM_TITLE(2) := "MAX_INVLEVEL"
+
+
+! Optimize spread
+  if MAX_SPREAD in {"Y","y"} then
+     SUM_ON(3) := true
+     SUM_OPTION(3) := MAX_SPREAD
+     SUM_TITLE(3) := "MAX_SPREAD"
+  end-if
+
+
+! Optimize margin
+  if MAX_MARGIN in {"Y","y"} then
+     SUM_ON(4) := true
+     SUM_OPTION(4) := MAX_MARGIN
+     SUM_TITLE(4) := "MAX_MARGIN"
+  end-if
+
+
+! Optimize utilization
+  if MAX_UTILIZATION in {"Y","y"} then
+     SUM_ON(5) := true
+     SUM_OPTION(5) := MAX_UTILIZATION
+     SUM_TITLE(5) := "MAX_UTILIZATION"
+  end-if
+
+
+! Optimize supply(on-time delivery)
+  if MAX_SUPPLY in {"Y","y"} then
+     SUM_ON(6) := true
+     SUM_OPTION(6) := MAX_SUPPLY
+     SUM_TITLE(6) := "MAX_SUPPLY"
+  end-if
+
+
+  setparam("XPRS_VERBOSE", true)
+  setparam("XPRS_LOADNAMES", true)
+  setparam("XPRS_MAXTIME", MAXTIME)
+  setparam("XPRS_MAXNODE", MAXNODE)
+  setparam("XPRS_MIPRELSTOP", 0.000000001)
+  setparam("ZEROTOL", 0.000000001)
+
+  forward procedure optimize_criteria(sc:integer, it:integer)
+
+  writeln("MIPRELSTOP ", strfmt(getparam("XPRS_MIPRELSTOP"),12,10))
+  writeln("ZEROTOL ", strfmt(getparam("ZEROTOL"),12,10))
+
+  !setparam("XPRS_PRESOLVE", 0)
+  !setparam("XPRS_CUTSTRATEGY", 3)
+  !setparam("XPRS_HEURSTRATEGY", 3)
+
+  ! New parameter setting for robust planning
+  !setparam('XPRS_HEURSTRATEGY', 1) ! Basic heuristics
+  !setparam('XPRS_VARSELECTION', 1) ! min pseudo cost
+  !setparam('XPRS_NODESELECTION', 2) ! Best first
+
+  validate_order("val_order.out", "")
+  validate_order_1("val_order_1.out", "")
+  validate_lineproduce("val_line.out", "")
+  validate_mgradeproduce("val_mgrade.out", "")
+  validate_gradeproduce("val_grade.out", "")
+  validate_inventory("val_inv.out", "")
+  validate_inv_g("val_inv_g.out", "")
+  validate_inv_mg("val_inv_mg.out", "")
+  validate_suppinv("val_suppinv.out", "")
+  validate_invglevel("val_invglevel.out", "")
+  validate_invilevel("val_invilevel.out", "")
+  validate_initinventory("val_initinv.out", "")
+  validate_material("val_mtrl.out", "")
+  validate_regionratio("val_region.out", "")
+  validate_PSI("val_PSI.out", "")
+  validate_PSI2("val_PSI2.out", "")
+  postproc_mtrlcost("val_mtrlcost.out", "")
+  postproc_sellmtrlcost("val_sellmtrlcost.out", "")
+  validate_mtrlinvcost("val_mtrlinvcost.out", "")
+  validate_TLUXtransfer("val_TLUXtransfer.out", "")
+  validate_grademinmax("val_grademinmax.out", "")
+  make_fixprod("make_fixprod.out", "")
+
+  write_produce("prod.out", "")
+  write_gmake("gmake.out", "")
+  write_imake("imake.out", "")
+  write_transfertotal("transfer.out", "")
+  write_transferplan("transferplan.out", "")
+  write_transferinit("transferinit.out", "")
+  write_inventory("inv.out", "")
+  write_sell("sellqty.out", "")
+  write_sell_plant("sell_plant.out", "")
+  write_sell_line("sell_line.out", "")
+  write_sell_exchange("sell_exchange.out", "")
+  write_unmeet("unmeet.out", "")
+  write_sellmtrlcost("sell.out", "")
+
+
+  ! Variables related to objectives
+  totUnmeet = sum(o in ORDER) ORDER_PRIORITY(o)*MONTH_PRIORITY1(ORDER_MONTH(o))*unmeet(o)
+  totUndInv = sum(s in SUPPLY, i in ITEM, t in MONTH) MONTH_PRIORITY2(t)*invminunder(s,i,t)
+  totOverInv= sum(s in SUPPLY, i in ITEM, t in MONTH) MONTH_PRIORITY2(t)*invmaxover(s,i,t)
+  totSpread = sum(o in ORDER, t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) ORDER_PRIORITY2(o)*
+                  ORDER_SPREAD(o)/ORDER_MAXQTY(o)*(sell(o,t)+sp_sell(o,t)) +
+              sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) ORDER_PRIORITY2(o)*
+                  ORDER_SPREAD(o)/ORDER_MAXQTY(o)*alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+              sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) ORDER_PRIORITY2(o)*
+                  ORDER_SPREAD(o)/ORDER_MAXQTY(o)*exch_sell(o,i,t)
+  totMargin = sum(o in ORDER, t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) ORDER_PRIORITY2(o)*
+                  ORDER_MARGIN(o)/ORDER_MAXQTY(o)*(sell(o,t)+sp_sell(o,t)) +
+              sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) ORDER_PRIORITY2(o)*
+                  ORDER_MARGIN(o)/ORDER_MAXQTY(o)*alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+              sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) ORDER_PRIORITY2(o)*
+                  ORDER_MARGIN(o)/ORDER_MAXQTY(o)*exch_sell(o,i,t)
+  totOntime = sum(o in ORDER, t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                  ORDER_PRIORITY2(o)*MONTH_PRIORITY3(t)*(sell(o,t)+sp_sell(o,t)) +
+              sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                  ORDER_PRIORITY2(o)*MONTH_PRIORITY3(t)*alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+              sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                  ORDER_PRIORITY2(o)*MONTH_PRIORITY3(t)*exch_sell(o,i,t)
+  totSell   = sum(o in ORDER, t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                  ITEM_PRIORITY(ORDER_ITEM(o))*MONTH_PRIORITY3(t)*(sell(o,t)+sp_sell(o,t)) +
+              sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                  ITEM_PRIORITY(ORDER_ITEM(o))*MONTH_PRIORITY3(t)*alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+              sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                  ITEM_PRIORITY(ORDER_ITEM(o))*MONTH_PRIORITY3(t)*exch_sell(o,i,t)
+
+  totMake   = WGT_SUB_MAKE*sum(l in LINE, g in GRADE, t in MONTH)
+                  MONTH_PRIORITY4(t)*LINE_PRIORITY(l)*GRADE_PRIORITY(g)*gmake(l,g,t)
+  totProd   = WGT_SUB_PROD*WGT_SUB_MAKE*sum(l in LINE, g in GRADE, t in MONTH)
+                  MONTH_PRIORITY4(t)*LINE_PRIORITY(l)*produce(l,g,t)
+  totAlt    = WGT_SUB_ALT*sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                ALT_PRIORITY(a)*alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t)
+  totExch   = WGT_SUB_EXCH*sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE)
+                EXCH_PRIORITY(ORDER_ITEM(o),i)*exch_sell(o,i,t)
+  TLUXInv   = sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | s="TLUX")
+                MONTH_PRIORITY4(t)*ITEM_PRIORITY(i)*inventory(p,s,i,t) +
+              sum(p in PLANT, s in SUPPLY, i in ITEM, sp in SPEC, t in MONTH | s="TLUX")
+                MONTH_PRIORITY4(t)*ITEM_PRIORITY(i)*inventory_sp(p,s,i,sp,t)
+  totInv    = MIN_INVENTORY_MOVEMENT*WGT_SUB_Inv*TLUXInv
+  SuppInv   = WGT_SUB_SuppInv*sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s)
+                MONTH_PRIORITY4(t)*ITEM_PRIORITY(i)*inventory(p,s,i,t) +
+              WGT_SUB_SuppInv*sum(p in PLANT, s in SUPPLY, i in ITEM, sp in SPEC, t in MONTH | p<>s)
+                MONTH_PRIORITY4(t)*ITEM_PRIORITY(i)*inventory_sp(p,s,i,sp,t)
+  repkgtransfer =
+    sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s) MONTH_PRIORITY3(t)*initinv_supp(p,s,i,t) +
+    sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s) MONTH_PRIORITY3(t)*initinv_nop(p,s,i,t) +
+    sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH) MONTH_PRIORITY3(t)*initinv_pkg(p,s,i,t)
+  supplytransfer =
+    sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s and s<>"TLUX") MONTH_PRIORITY3(t)*transfer(p,s,i,t) +
+    sum(p in PLANT, s in SUPPLY, i in ITEM, sp in SPEC, t in MONTH | p<>s and s<>"TLUX") MONTH_PRIORITY3(t)*transfer_sp(p,s,i,sp,t)
+  TLUXtransfer =
+    sum(p in PLANT, s in SUPPLY, i in ITEM, t in MONTH | p<>s and s="TLUX") MONTH_PRIORITY3(t)*transfer(p,s,i,t) +
+    sum(p in PLANT, s in SUPPLY, i in ITEM, sp in SPEC, t in MONTH | p<>s and s="TLUX") MONTH_PRIORITY3(t)*transfer_sp(p,s,i,sp,t)
+  totTransfer= WGT_SUB_Trans*repkgtransfer +
+               WGT_SUB_Trans*supplytransfer +
+               MIN_INVENTORY_MOVEMENT*WGT_SUB_Trans*TLUXtransfer
+
+
+  forall (sc in SCENARIO | SUM_ON(sc)) do
+    writeln("\n*******************************************************************************")
+    writeln("**                      Scenario ", SUM_TITLE(sc))
+    writeln("*******************************************************************************\n")
+
+    SUM_TIME(sc) := gettime
+
+    if sc=1 then
+       ! Minimize unmeet
+       ! exportprob(EP_MIN, SUM_TITLE(sc), totUnmeet)
+
+       minimize(totUnmeet)
+       writeln(".. info mipstatus of ", SUM_TITLE(sc), " ", getparam("XPRS_mipstatus"),
+               " (SOL ", XPRS_MIP_SOLUTION, " OPT ", XPRS_MIP_OPTIMAL, ")")
+       solUnmeet := getsol(totUnmeet)
+       writeln(".. totUnmeet ", solUnmeet, " minimized")
+
+       ! Reset regional ratio constraints which can not be less than REGIONRATIO
+       if REGION_CAPA = "Y" then
+          forall (mg in MGRADE, r in REGION, t in MONTH)
+            RegionRatio(mg,r,t) :=
+              sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o) = r) sell(o,t) +
+              sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o) = r) sp_sell(o,t) +
+              sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg and ORDER_REGION(o) = r)
+                  alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+              sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg and ORDER_REGION(o) = r)
+                  exch_sell(o,i,t) >=
+              REGIONRATIO(mg,r,t) / 100 *
+              (sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) sell(o,t) +
+               sum(o in ORDER | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) sp_sell(o,t) +
+               sum(o in ORDER, a in 1..ALT_CNT(o) | GRADE_MGRADE(ITEM_GRADE(ALT_ITEM(o,a))) = mg) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+               sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)) | GRADE_MGRADE(ITEM_GRADE(ORDER_ITEM(o))) = mg) exch_sell(o,i,t))
+       end-if
+
+    elif sc=2 then
+       ! Minimize inventory shortage
+       ! exportprob(EP_MAX, SUM_TITLE(sc), 1)
+
+       if solUnmeet > ZEROVALUE then
+          UnmeetCtr := totUnmeet <= solUnmeet * (1+ALLOW_P1_SVC_RATE)
+          writeln(".. Unmeet level  ", solUnmeet * (1+ALLOW_P1_SVC_RATE), " of ", ALLOW_P1_SVC_RATE, " limited")
+       else
+          UnmeetCtr := totUnmeet <= ZEROVALUE
+          writeln(".. Unmeet level  ", ZEROVALUE, " of 0 limited")
+       end-if
+
+       minimize(totUndInv)
+       writeln(".. info mipstatus of ", SUM_TITLE(sc), " ", getparam("XPRS_mipstatus"),
+               " (SOL ", XPRS_MIP_SOLUTION, " OPT ", XPRS_MIP_OPTIMAL, ")")
+       solUndInv := getsol(totUndInv)
+       writeln(".. minInv ", solUndInv, " minimized")
+
+    else
+       optimize_criteria(sc, 1)
+
+       if getparam("XPRS_mipstatus") not in {XPRS_MIP_SOLUTION, XPRS_MIP_OPTIMAL} then
+          writeln("\n*******************************************************************************")
+          writeln("**                      Scenario ", SUM_TITLE(sc), " 2nd Try")
+          writeln("*******************************************************************************\n")
+          optimize_criteria(sc, 2)
+       end-if
+
+    end-if
+
+    SUM_STATE(sc) := getparam("XPRS_mipstatus")	! {XPRS_MIP_SOLUTION, XPRS_MIP_OPTIMAL}
+    SUM_SVCLEVEL(sc) := getsol(totUnmeet)
+    SUM_INVLEVEL(sc) := getsol(totUndInv)
+    SUM_INVLEVEL2(sc) := getsol(totOverInv)
+    SUM_SPREAD(sc) := getsol(totSpread)
+    SUM_MARGIN(sc) := getsol(totMargin)
+    SUM_ONTIME(sc) := getsol(totOntime)
+    SUM_SELL(sc) := getsol(totSell)
+    SUM_PURESELL(sc) := getsol(sum(o in ORDER, t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) (sell(o,t)+sp_sell(o,t)) +
+                           sum(o in ORDER, a in 1..ALT_CNT(o), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) alt_sell(o,ALT_PLANT(o,a),ALT_ITEM(o,a),t) +
+                           sum(o in ORDER, i in EXCHITEM(ORDER_ITEM(o)), t in MONTH | ORDER_MAXQTY(o) > ZEROVALUE) exch_sell(o,i,t))
+    SUM_PRODUCE(sc) := getsol(sum(l in LINE, g in GRADE, t in MONTH) produce(l,g,t))
+    SUM_MAKE(sc) := getsol(totMake)
+    SUM_PROD(sc) := getsol(totProd)
+    SUM_ALT(sc) := getsol(totAlt)
+    SUM_EXCH(sc) := getsol(totExch)
+    TLUX_INV(sc) := getsol(TLUXInv)
+    SUM_TRANS(sc) := getsol(totTransfer)
+    TLUX_TRANS(sc) := getsol(WGT_SUB_Trans*TLUXtransfer)
+    SUPP_INV(sc) := getsol(SuppInv)
+    writeln("** solve ", SUM_TITLE(sc), " finished at ", gettime, " sec")
+
+
+    validate_order("val_order.out", SUM_TITLE(sc))
+    validate_order_1("val_order_1.out", SUM_TITLE(sc))
+    validate_lineproduce("val_line.out", SUM_TITLE(sc))
+    validate_mgradeproduce("val_mgrade.out", SUM_TITLE(sc))
+    validate_gradeproduce("val_grade.out", SUM_TITLE(sc))
+    validate_inventory("val_inv.out", SUM_TITLE(sc))
+    validate_inv_g("val_inv_g.out", SUM_TITLE(sc))
+    validate_inv_mg("val_inv_mg.out", SUM_TITLE(sc))
+    validate_suppinv("val_suppinv.out", SUM_TITLE(sc))
+    validate_invglevel("val_invglevel.out", SUM_TITLE(sc))
+    validate_invilevel("val_invilevel.out", SUM_TITLE(sc))
+    validate_initinventory("val_initinv.out", SUM_TITLE(sc))
+    validate_material("val_mtrl.out", SUM_TITLE(sc))
+    validate_regionratio("val_region.out", SUM_TITLE(sc))
+    validate_PSI("val_PSI.out", SUM_TITLE(sc))
+    validate_PSI2("val_PSI2.out", SUM_TITLE(sc))
+    validate_TLUXtransfer("val_TLUXtransfer.out", SUM_TITLE(sc))
+    validate_grademinmax("val_grademinmax.out", SUM_TITLE(sc))
+
+    ! Calculate material cost based on last optimized result
+    postproc_mtrlcost("val_mtrlcost.out", SUM_TITLE(sc))
+    postproc_sellmtrlcost("val_sellmtrlcost.out", SUM_TITLE(sc))
+    validate_mtrlinvcost("val_mtrlinvcost.out", SUM_TITLE(sc))
+
+
+    if sc in {3,4,5,6} and SUM_STATE(sc) in {XPRS_MIP_SOLUTION, XPRS_MIP_OPTIMAL} then
+       write_produce("prod.out", SUM_TITLE(sc))
+       write_gmake("gmake.out", SUM_TITLE(sc))
+       write_imake("imake.out", SUM_TITLE(sc))
+       write_transfertotal("transfer.out", SUM_TITLE(sc))
+       write_transferplan("transferplan.out", SUM_TITLE(sc))
+       write_transferinit("transferinit.out", SUM_TITLE(sc))
+       write_inventory("inv.out", SUM_TITLE(sc))
+       write_sell("sellqty.out", SUM_TITLE(sc))
+       write_sell_plant("sell_plant.out", SUM_TITLE(sc))
+       write_sell_line("sell_line.out", SUM_TITLE(sc))
+       write_sell_exchange("sell_exchange.out", SUM_TITLE(sc))
+       write_unmeet("unmeet.out", SUM_TITLE(sc))
+       write_sellmtrlcost("sell.out", SUM_TITLE(sc))
+       writeln("** write_result ", SUM_TITLE(sc), " finished at ", gettime, " sec")
+    end-if
+
+
+    ! Record running time
+    SUM_TIME(sc) := gettime - SUM_TIME(sc)
+  end-do
+
+  writeln("\n\nRelease 20161211R", " printed at ", datetime(SYS_NOW))
+  writeln("****************************************************************************************************************************************************************")
+  writeln("**                                                                     Scenario Summary                                                                       **")
+  writeln("****************************************************************************************************************************************************************")
+  writeln("ScenarioName    O|sec  UnmLevel   UndInv   OvrInv      Spread      Margin   Utilize      Sell Sell% Prod Prod%   totMake   totProd totAlt totExch SuppInv totTrn")
+  writeln("-----------------|---+---------+--------+--------+-----------+-----------+---------+---------+-----+----+-----+---------+---------+------+-------+-------+------")
+  forall (sc in SCENARIO | SUM_STATE(sc) in {XPRS_MIP_SOLUTION, XPRS_MIP_OPTIMAL}) do
+    writeln(strfmt(SUM_TITLE(sc),-16),
+            strfmt(SUM_OPTION(sc),1), "|",
+            strfmt(SUM_TIME(sc),3,0), " ",
+            strfmt(SUM_SVCLEVEL(sc),9,0), " ",
+            strfmt(SUM_INVLEVEL(sc),8,0), " ",
+            strfmt(SUM_INVLEVEL2(sc),8,0), " ",
+            strfmt(SUM_SPREAD(sc),11,0), " ",
+            strfmt(SUM_MARGIN(sc),11,0), " ",
+            strfmt(SUM_ONTIME(sc),9,0), " ",
+            strfmt(SUM_SELL(sc),9,0), " ",
+            strfmt(if(sum(o in ORDER) ORDER_MAXQTY(o) < ZEROVALUE,0,
+                     100*SUM_PURESELL(sc)/sum(o in ORDER) ORDER_MAXQTY(o)),5,1), " ",
+            strfmt(SUM_PRODUCE(sc),4,0), " ",
+            strfmt(if(sum(l in LINE, t in MONTH) LINEDAYS(l,t) < ZEROVALUE,0,
+                     100*SUM_PRODUCE(sc)/sum(l in LINE, t in MONTH) LINEDAYS(l,t)),5,1), " ",
+            strfmt(SUM_MAKE(sc),9,0), " ",
+            strfmt(SUM_PROD(sc),9,0), " ",
+            strfmt(SUM_ALT(sc),6,0), " ",
+            strfmt(SUM_EXCH(sc)/1000,7,0), " ",
+            strfmt(SUPP_INV(sc)/1000,7,0), " ",
+            strfmt(SUM_TRANS(sc)/1000,6,0))
+  end-do
+  writeln("-----------------|---+---------+--------+--------+-----------+-----------+---------+---------+-----+----+-----+---------+---------+------+-------+-------+------")
+
+  fopen(RESULT_PATH+"val_summary.out", F_OUTPUT)
+  writeln("Release 20161211R", " printed at ", datetime(SYS_NOW))
+  writeln("ScenarioName    O|sec  UnmLevel   UndInv   OvrInv      Spread      Margin   Utilize      Sell Sell% Prod Prod%   totMake   totProd totAlt totExch SuppInv totTrn")
+  writeln("-----------------|---+---------+--------+--------+-----------+-----------+---------+---------+-----+----+-----+---------+---------+------+-------+-------+------")
+  forall (sc in SCENARIO | SUM_STATE(sc) in {XPRS_MIP_SOLUTION, XPRS_MIP_OPTIMAL}) do
+    writeln(strfmt(SUM_TITLE(sc),-16),
+            strfmt(SUM_OPTION(sc),1), "|",
+            strfmt(SUM_TIME(sc),3,0), " ",
+            strfmt(SUM_SVCLEVEL(sc),9,0), " ",
+            strfmt(SUM_INVLEVEL(sc),8,0), " ",
+            strfmt(SUM_INVLEVEL2(sc),8,0), " ",
+            strfmt(SUM_SPREAD(sc),11,0), " ",
+            strfmt(SUM_MARGIN(sc),11,0), " ",
+            strfmt(SUM_ONTIME(sc),9,0), " ",
+            strfmt(SUM_SELL(sc),9,0), " ",
+            strfmt(if(sum(o in ORDER) ORDER_MAXQTY(o) < ZEROVALUE,0,
+                     100*SUM_PURESELL(sc)/sum(o in ORDER) ORDER_MAXQTY(o)),5,1), " ",
+            strfmt(SUM_PRODUCE(sc),4,0), " ",
+            strfmt(if(sum(l in LINE, t in MONTH) LINEDAYS(l,t) < ZEROVALUE,0,
+                     100*SUM_PRODUCE(sc)/sum(l in LINE, t in MONTH) LINEDAYS(l,t)),5,1), " ",
+            strfmt(SUM_MAKE(sc),9,0), " ",
+            strfmt(SUM_PROD(sc),9,0), " ",
+            strfmt(SUM_ALT(sc),6,0), " ",
+            strfmt(SUM_EXCH(sc)/1000,7,0), " ",
+            strfmt(SUPP_INV(sc)/1000,7,0), " ",
+            strfmt(SUM_TRANS(sc)/1000,6,0))
+  end-do
+  fclose(F_OUTPUT)
+
+
+  ! Optimize each criteria (spread/margin/util/supply) and others
+  procedure optimize_criteria(sc:integer, iteration:integer)
+    declarations
+      DEF_MIPRELSTOP: real
+    end-declarations
+
+    ! Initialize goal constraints
+    UnmeetCtr := 1
+    UndInvCtr := 1
+    forall (o in ORDER) MeetCtr(o) := 1
+
+    ! Set 1st goal constraints
+    if solUnmeet > ZEROVALUE then
+       UnmeetCtr := totUnmeet <= solUnmeet * (1+ALLOW_P2_SVC_RATE)
+       writeln(".. Unmeet level  ", solUnmeet * (1+ALLOW_P2_SVC_RATE), " of tol ", ALLOW_P2_SVC_RATE, " limited")
+    else
+       UnmeetCtr := totUnmeet <= ZEROVALUE
+       writeln(".. Unmeet level  ", ZEROVALUE, " of 0 limited")
+    end-if
+
+    ! Set 2nd goal constraints
+    if solUndInv > ZEROVALUE then
+       UndInvCtr := totUndInv <= solUndInv * (1+ALLOW_P2_INV_RATE)
+       writeln(".. UndInv level  ", solUndInv * (1+ALLOW_P2_INV_RATE), " of tol ", ALLOW_P2_INV_RATE, " limited")
+    else
+       UndInvCtr := totUndInv <= ZEROVALUE
+       writeln(".. UndInv level  ", ZEROVALUE, " of 0 limited")
+    end-if
+
+    DEF_MIPRELSTOP := getparam("XPRS_MIPRELSTOP")
+    if iteration = 1 then
+       setparam("XPRS_MIPRELSTOP", P3_1ST_MIPRELSTOP)
+    elif iteration = 2 then
+       setparam("XPRS_MIPRELSTOP", P3_2ND_MIPRELSTOP)
+    end-if
+    writeln(".. MIPRELSTOP changed from ", DEF_MIPRELSTOP, " to ", getparam("XPRS_MIPRELSTOP"))
+
+    ! Optimize each criteria (spread/margin/util/supply)
+    case sc of
+      3 : maximize(totSpread)
+      4 : maximize(totMargin)
+      5 : maximize(totOntime)
+      6 : maximize(totSell)
+    end-case
+    setparam("XPRS_MIPRELSTOP", DEF_MIPRELSTOP)
+    writeln(".. MIPRELSTOP restored to ", getparam("XPRS_MIPRELSTOP"))
+
+    if getparam("XPRS_mipstatus") in {XPRS_MIP_SOLUTION, XPRS_MIP_OPTIMAL} then
+       case sc of
+         3 : validate_grademinmax("val_grademinmax.out", "MAX_SPREAD_INTERM")
+         4 : validate_grademinmax("val_grademinmax.out", "MAX_MARGIN_INTERM")
+         5 : validate_grademinmax("val_grademinmax.out", "MAX_UTILIZE_INTERM")
+         6 : validate_grademinmax("val_grademinmax.out", "MAX_SUPPLY_INTERM")
+       end-case
+
+       writeln("\n*******************************************************************************")
+       writeln("**                      Optimize other criteria")
+       writeln("*******************************************************************************\n")
+
+       forall (o in ORDER) solMeet(o) := getsol(meet2(o))
+
+       ! Initialize goal constraints again
+       UnmeetCtr := 1
+       UndInvCtr := 1
+       forall (o in ORDER) MeetCtr(o) := 1
+
+       ! Set 2nd goal constraints again
+       if solUndInv > ZEROVALUE then
+          UndInvCtr := totUndInv <= solUndInv * (1+ALLOW_P3_INV_RATE)
+          writeln(".. UndInv level  ", solUndInv * (1+ALLOW_P3_INV_RATE), " of tol ", ALLOW_P3_INV_RATE, " limited")
+       else
+          UndInvCtr := totUndInv <= ZEROVALUE
+          writeln(".. UndInv level  ", ZEROVALUE, " of 0 limited")
+       end-if
+
+       ! Set 3rd goal constraints again
+       forall (o in ORDER) MeetCtr(o) := meet2(o) = solMeet(o)
+
+       ! Optimize others
+       minimize(totMake + totProd + totAlt + totExch + totInv + SuppInv + totTransfer)
+
+       writeln(".. info mipstatus of ", SUM_TITLE(sc), " ", getparam("XPRS_mipstatus"),
+               " (SOL ", XPRS_MIP_SOLUTION, " OPT ", XPRS_MIP_OPTIMAL, ")")
+       case sc of
+         3 : writeln(".. totSpread ", getsol(totSpread), " maintained")
+         4 : writeln(".. totMargin ", getsol(totMargin), " maintained")
+         5 : writeln(".. totOntime ", getsol(totOntime), " maintained")
+         6 : writeln(".. totSell ", getsol(totSell), " maintained")
+       end-case
+       writeln(".. totMake ", getsol(totMake), " minimized")
+       writeln(".. totProd ", getsol(totProd), " minimized")
+       writeln(".. totAlt  ", getsol(totAlt), " minimized")
+       writeln(".. totExch ", getsol(totExch), " minimized")
+       writeln(".. totInv  ", getsol(totInv), " minimized")
+       writeln(".. SuppInv ", getsol(SuppInv), " minimized")
+       writeln(".. totTran ", getsol(totTransfer), " minimized")
+    end-if
+  end-procedure
+
+end-model

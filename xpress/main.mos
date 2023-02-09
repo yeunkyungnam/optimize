@@ -3,7 +3,7 @@ model SCP_LARGE_SCALE
 	options noimplicit
 
 	parameters
-		PLAN_DIR = "./data"
+		PLAN_DIR = "./data3"
 		TLNC = 0.0001
 	end-parameters
 
